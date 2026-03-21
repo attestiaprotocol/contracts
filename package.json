@@ -1,0 +1,19 @@
+{
+  "name": "attestia-contracts",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:base-sepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
+    "eas:register-all": "hardhat run scripts/registerEasSchemas.ts --network baseSepolia",
+    "eas:register-onchain": "hardhat run scripts/registerEasOnchainSchema.ts --network baseSepolia",
+    "eas:register-offchain": "hardhat run scripts/registerEasOffchainSchemas.ts --network baseSepolia"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.0",
+    "typescript": "^5.7.0"
+  }
+}
