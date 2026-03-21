@@ -1,27 +1,21 @@
 /**
- * Register Attestia EAS schemas on Base (Sepolia or mainnet) SchemaRegistry.
- * Keep schema strings in sync with `web/src/lib/config.ts`.
+ * Register the two Attestia EAS schemas on Base (Sepolia or mainnet):
  *
- * Usage:
- *   npx hardhat run scripts/registerEasSchemas.ts --network baseSepolia
+ * 1. **Attester scores (off-chain)** — each attester signs a score; no resolver.
+ * 2. **Aggregate (on-chain)** — submitter publishes the rollup on-chain; optional
+ *    `AttestiaAggregateResolver` via `ATTESTIA_AGGREGATE_RESOLVER` in `.env`.
  *
- * Env: same RPC + PRIVATE_KEY as deploy (see contracts/.env).
+ * Keep schema strings in sync with `webapp/src/lib/eas/attestiaSchemas.ts`.
+ *
+ *   npm run eas:register-all
  */
 import { ethers } from "hardhat";
-
-const SCHEMA_REGISTRY = "0x4200000000000000000000000000000000000020";
-
-const SCHEMA_REGISTRY_ABI = [
-  "function register(string schema, address resolver, bool revocable) external returns (bytes32)",
-] as const;
+import {
+  EAS_SCHEMA_REGISTRY,
+  ensureSchemaRegistered,
+} from "./easSchemaRegistryUtils";
 
 const SCHEMAS = [
-  {
-    envOnchain: "NEXT_PUBLIC_EAS_SCHEMA_UID",
-    label: "ATTESTIA_ONCHAIN",
-    definition:
-      "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash",
-  },
   {
     envScore: "NEXT_PUBLIC_EAS_SCHEMA_UID_SCORE_OFFCHAIN",
     envScoreServer: "EAS_SCHEMA_UID_SCORE_OFFCHAIN",
@@ -30,31 +24,49 @@ const SCHEMAS = [
       "bytes32 contentHash,string assetId,uint256 authenticityScore,uint256 deepfakeRiskBps,uint64 chainTimestamp",
   },
   {
-    envAgg: "EAS_SCHEMA_UID_AGGREGATE_OFFCHAIN",
-    label: "ATTESTIA_AGGREGATE_OFFCHAIN",
+    envOnchain: "NEXT_PUBLIC_EAS_SCHEMA_UID",
+    label: "ATTESTIA_ONCHAIN_AGGREGATE",
     definition:
-      "bytes32 contentHash,string assetId,uint256 avgAuthenticityFP,uint256 verifierCount,bytes32 scoresPayloadHash,bytes32 sqlProofCommitment",
+      "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash",
   },
 ] as const;
 
+function onchainResolver(): string {
+  const raw = process.env.ATTESTIA_AGGREGATE_RESOLVER?.trim();
+  if (!raw) return ethers.ZeroAddress;
+  if (!ethers.isAddress(raw)) {
+    throw new Error("ATTESTIA_AGGREGATE_RESOLVER must be a valid address");
+  }
+  return ethers.getAddress(raw);
+}
+
 async function main() {
   const [deployer] = await ethers.getSigners();
-  console.log("SchemaRegistry", SCHEMA_REGISTRY);
+  console.log("SchemaRegistry", EAS_SCHEMA_REGISTRY);
   console.log("Caller", deployer.address);
+  console.log(
+    "\nRegistering 2 core schemas: (1) attester score off-chain, (2) aggregate on-chain.\n",
+  );
 
-  const sr = new ethers.Contract(SCHEMA_REGISTRY, SCHEMA_REGISTRY_ABI, deployer);
+  const aggregateResolver = onchainResolver();
+  if (aggregateResolver === ethers.ZeroAddress) {
+    console.warn("ATTESTIA_AGGREGATE_RESOLVER unset — on-chain schema uses zero resolver.");
+  } else {
+    console.log("On-chain aggregate resolver", aggregateResolver);
+  }
 
-  console.log("\n--- web/.env.local (and server vars) ---\n");
+  console.log("\n--- webapp/.env.local (and server vars) ---\n");
 
   for (const row of SCHEMAS) {
-    const uid: string = await sr.register.staticCall(
+    const resolver =
+      "envOnchain" in row ? aggregateResolver : ethers.ZeroAddress;
+    const { uid, alreadyRegistered } = await ensureSchemaRegistered(
+      deployer,
       row.definition,
-      ethers.ZeroAddress,
+      resolver,
       true,
     );
-    const tx = await sr.register(row.definition, ethers.ZeroAddress, true);
-    await tx.wait();
-    console.log(`# ${row.label}`);
+    console.log(`# ${row.label}${alreadyRegistered ? " (already registered — skipped)" : ""}`);
     console.log(`${row.label}_UID=${uid}`);
     if ("envOnchain" in row) {
       console.log(`${row.envOnchain}=${uid}`);
@@ -62,9 +74,6 @@ async function main() {
     if ("envScore" in row) {
       console.log(`${row.envScore}=${uid}`);
       console.log(`${row.envScoreServer}=${uid}`);
-    }
-    if ("envAgg" in row) {
-      console.log(`${row.envAgg}=${uid}`);
     }
     console.log("");
   }
