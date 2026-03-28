@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 
-const MIN = ethers.parseEther("0.01");
+const MIN = ethers.parseEther("0.1");
 
 describe("AttestiaStake", () => {
   async function deployStake() {
@@ -112,6 +112,7 @@ describe("AttestiaStake", () => {
     const [, , , dave, eve, frank] = await ethers.getSigners();
 
     await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.001"));
+    await stake.connect(deployer).fundRewards({ value: ethers.parseEther("1") });
 
     for (const verifier of [alice, bob, dave, eve, frank]) {
       await stake.connect(verifier).stake({ value: MIN });
@@ -135,6 +136,7 @@ describe("AttestiaStake", () => {
     const [, , , dave] = await ethers.getSigners();
 
     await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.001"));
+    await stake.connect(deployer).fundRewards({ value: ethers.parseEther("1") });
 
     for (const verifier of [alice, bob, dave]) {
       await stake.connect(verifier).stake({ value: MIN });
@@ -156,6 +158,7 @@ describe("AttestiaStake", () => {
     const { stake, deployer } = await deployStake();
 
     await stake.connect(deployer).setPhaseRewardBps(4500, 7500, 10000);
+    await stake.connect(deployer).setRewardWeights(8500, 1500);
     await stake.connect(deployer).setDeviationThresholds(2300, 1800);
     await stake.connect(deployer).setSlashingParams(1_500_000, 900, 2500);
     await stake.connect(deployer).setReputationParams(35000, 7000, 6000, 14000);
@@ -163,6 +166,8 @@ describe("AttestiaStake", () => {
     expect(await stake.phase0RewardBps()).to.equal(4500);
     expect(await stake.phase1RewardBps()).to.equal(7500);
     expect(await stake.phase2RewardBps()).to.equal(10000);
+    expect(await stake.alignmentWeightBps()).to.equal(8500);
+    expect(await stake.influenceWeightBps()).to.equal(1500);
     expect(await stake.phase1DeviationThresholdBps()).to.equal(2300);
     expect(await stake.phase2DeviationThresholdBps()).to.equal(1800);
     expect(await stake.phase1VarianceThresholdBps2()).to.equal(1_500_000n);
@@ -179,6 +184,10 @@ describe("AttestiaStake", () => {
 
     await expect(
       stake.connect(deployer).setPhaseRewardBps(5000, 8000, 10001),
+    ).to.be.revertedWithCustomError(stake, "InvalidParam");
+
+    await expect(
+      stake.connect(deployer).setRewardWeights(8000, 1000),
     ).to.be.revertedWithCustomError(stake, "InvalidParam");
 
     await expect(
@@ -207,6 +216,7 @@ describe("AttestiaStake", () => {
 
     await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.002"));
     await stake.connect(deployer).setPhaseRewardBps(4200, 7800, 10000);
+    await stake.connect(deployer).setRewardWeights(7000, 3000);
     await stake.connect(deployer).setDeviationThresholds(2100, 1700);
     await stake.connect(deployer).setSlashingParams(1_600_000, 800, 2200);
     await stake.connect(deployer).setReputationParams(33000, 7500, 6500, 14500);
@@ -216,6 +226,8 @@ describe("AttestiaStake", () => {
     expect(cfg.phase0RewardBps).to.equal(4200);
     expect(cfg.phase1RewardBps).to.equal(7800);
     expect(cfg.phase2RewardBps).to.equal(10000);
+    expect(cfg.alignmentWeightBps).to.equal(7000);
+    expect(cfg.influenceWeightBps).to.equal(3000);
     expect(cfg.phase1DeviationThresholdBps).to.equal(2100);
     expect(cfg.phase2DeviationThresholdBps).to.equal(1700);
     expect(cfg.phase1VarianceThresholdBps2).to.equal(1_600_000n);
@@ -225,5 +237,13 @@ describe("AttestiaStake", () => {
     expect(cfg.reputationLambdaBps).to.equal(7500);
     expect(cfg.reputationMinBps).to.equal(6500);
     expect(cfg.reputationMaxBps).to.equal(14500);
+  });
+
+  it("reverts when rewards exceed funded pool", async () => {
+    const { stake, deployer, alice } = await deployStake();
+    await stake.connect(deployer).fundRewards({ value: ethers.parseEther("0.01") });
+    await expect(
+      stake.connect(deployer).grantReward(alice.address, ethers.parseEther("0.02")),
+    ).to.be.revertedWithCustomError(stake, "InsufficientRewardPool");
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Register the three Attestia EAS schemas on Base (Sepolia or mainnet):
  *
- * 1. **Contributor media attestation (on-chain)** — media hash + URI + context + 12h deadline.
+ * 1. **Contributor media attestation (on-chain)** — media hash + URI + context + verification deadline.
  * 2. **Attester scores (off-chain)** — each attester signs a score; no resolver.
  * 3. **Aggregate (on-chain)** — submitter publishes the rollup on-chain; optional
  *    `AttestiaAggregateResolver` via `ATTESTIA_AGGREGATE_RESOLVER` in `.env`.

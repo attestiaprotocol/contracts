@@ -25,7 +25,7 @@ describe("AttestiaAggregateResolver", () => {
     const fakeAddr = await fake.getAddress();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(ethers.parseEther("0.01"));
+    const stake = await Stake.deploy(ethers.parseEther("0.1"));
     await stake.waitForDeployment();
 
     const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
@@ -49,7 +49,7 @@ describe("AttestiaAggregateResolver", () => {
     const fakeAddr = await fake.getAddress();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(ethers.parseEther("0.01"));
+    const stake = await Stake.deploy(ethers.parseEther("0.1"));
     await stake.waitForDeployment();
 
     const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
@@ -74,12 +74,13 @@ describe("AttestiaAggregateResolver", () => {
     await fake.waitForDeployment();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(ethers.parseEther("0.01"));
+    const stake = await Stake.deploy(ethers.parseEther("0.1"));
     await stake.waitForDeployment();
     await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.001"));
+    await stake.connect(deployer).fundRewards({ value: ethers.parseEther("1") });
 
     for (const verifier of [v1, v2, v3, v4, v5]) {
-      await stake.connect(verifier).stake({ value: ethers.parseEther("0.01") });
+      await stake.connect(verifier).stake({ value: ethers.parseEther("0.1") });
       await stake.connect(verifier).registerAsAttester();
     }
 

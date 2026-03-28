@@ -12,8 +12,11 @@ contract AttestiaStake {
 
     address public owner;
     address public performanceReporter;
+    address public registry;
     uint256 public minStake;
     uint256 public baseRewardPerRound;
+    uint256 public rewardPoolWei;
+    uint256 public totalPendingRewardsWei;
 
     mapping(address => uint256) public staked;
     mapping(address => uint256) public pendingRewards;
@@ -31,7 +34,10 @@ contract AttestiaStake {
     uint16 public phase2DeviationThresholdBps = 2_000; // 0.20
     uint256 public phase1VarianceThresholdBps2 = 2_000_000; // 0.02 on [0,1] scores
     uint16 public phase1SlashBps = 1_000; // 10%
-    uint16 public phase2SlashBps = 3_000; // 30%
+    uint16 public phase2SlashBps = 2_500; // 25%
+
+    uint16 public alignmentWeightBps = 8_000;
+    uint16 public influenceWeightBps = 2_000;
 
     uint16 public alphaBps = 40_000; // alpha = 4.0
     uint16 public reputationLambdaBps = 8_000; // lambda = 0.8
@@ -53,6 +59,8 @@ contract AttestiaStake {
         NetworkPhase phase;
         uint256 variance;
         uint256 avg;
+        uint256 sumScores;
+        uint256 verifierCount;
     }
 
     struct EconomicConfig {
@@ -65,6 +73,8 @@ contract AttestiaStake {
         uint256 phase1VarianceThresholdBps2;
         uint16 phase1SlashBps;
         uint16 phase2SlashBps;
+        uint16 alignmentWeightBps;
+        uint16 influenceWeightBps;
         uint16 alphaBps;
         uint16 reputationLambdaBps;
         uint16 reputationMinBps;
@@ -94,8 +104,11 @@ contract AttestiaStake {
     event RegisteredSubmitter(address indexed account);
     event RegisteredAttester(address indexed account);
     event PerformanceReporterSet(address indexed reporter);
+    event RegistrySet(address indexed registry);
+    event ContributorFeesDeposited(address indexed registry, uint256 amount);
     event BaseRewardPerRoundSet(uint256 amount);
     event PhaseRewardBpsSet(uint16 phase0RewardBps, uint16 phase1RewardBps, uint16 phase2RewardBps);
+    event RewardWeightsSet(uint16 alignmentWeightBps, uint16 influenceWeightBps);
     event DeviationThresholdsSet(uint16 phase1DeviationThresholdBps, uint16 phase2DeviationThresholdBps);
     event SlashingParamsSet(uint256 phase1VarianceThresholdBps2, uint16 phase1SlashBps, uint16 phase2SlashBps);
     event ReputationParamsSet(uint16 alphaBps, uint16 reputationLambdaBps, uint16 reputationMinBps, uint16 reputationMaxBps);
@@ -124,12 +137,17 @@ contract AttestiaStake {
     error ZeroAddress();
     error AlreadyRegistered();
     error NotPerformanceReporter();
+    error NotRegistry();
     error InvalidInputLength();
     error EmptyScores();
     error InvalidScore();
     error InvalidVerifier();
     error DuplicateVerifier();
     error InvalidParam();
+    error InsufficientRewardPool();
+
+    uint256 public constant MIN_VERIFIER_STAKE = 0.05 ether;
+    uint256 public constant MAX_VERIFIER_STAKE = 0.2 ether;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -148,7 +166,13 @@ contract AttestiaStake {
         _;
     }
 
+    modifier onlyRegistry() {
+        if (msg.sender != registry) revert NotRegistry();
+        _;
+    }
+
     constructor(uint256 minStakeWei) {
+        if (minStakeWei < MIN_VERIFIER_STAKE || minStakeWei > MAX_VERIFIER_STAKE) revert InvalidParam();
         owner = msg.sender;
         performanceReporter = msg.sender;
         minStake = minStakeWei;
@@ -161,6 +185,7 @@ contract AttestiaStake {
     }
 
     function setMinStake(uint256 newMin) external onlyOwner {
+        if (newMin < MIN_VERIFIER_STAKE || newMin > MAX_VERIFIER_STAKE) revert InvalidParam();
         minStake = newMin;
     }
 
@@ -168,6 +193,12 @@ contract AttestiaStake {
         if (reporter == address(0)) revert ZeroAddress();
         performanceReporter = reporter;
         emit PerformanceReporterSet(reporter);
+    }
+
+    function setRegistry(address registryAddress) external onlyOwner {
+        if (registryAddress == address(0)) revert ZeroAddress();
+        registry = registryAddress;
+        emit RegistrySet(registryAddress);
     }
 
     function setBaseRewardPerRound(uint256 amount) external onlyOwner {
@@ -181,6 +212,13 @@ contract AttestiaStake {
         phase1RewardBps = phase1;
         phase2RewardBps = phase2;
         emit PhaseRewardBpsSet(phase0, phase1, phase2);
+    }
+
+    function setRewardWeights(uint16 alignmentWeight, uint16 influenceWeight) external onlyOwner {
+        if (alignmentWeight + influenceWeight != BPS) revert InvalidParam();
+        alignmentWeightBps = alignmentWeight;
+        influenceWeightBps = influenceWeight;
+        emit RewardWeightsSet(alignmentWeight, influenceWeight);
     }
 
     function setDeviationThresholds(uint16 phase1DeviationBps, uint16 phase2DeviationBps) external onlyOwner {
@@ -228,6 +266,8 @@ contract AttestiaStake {
             phase1VarianceThresholdBps2: phase1VarianceThresholdBps2,
             phase1SlashBps: phase1SlashBps,
             phase2SlashBps: phase2SlashBps,
+            alignmentWeightBps: alignmentWeightBps,
+            influenceWeightBps: influenceWeightBps,
             alphaBps: alphaBps,
             reputationLambdaBps: reputationLambdaBps,
             reputationMinBps: reputationMinBps,
@@ -302,11 +342,19 @@ contract AttestiaStake {
     }
 
     function fundRewards() external payable onlyOwner {
+        rewardPoolWei += msg.value;
         emit RewardsFunded(msg.value);
+    }
+
+    /// @notice Receives contributor network fees from AttestiaRegistry.
+    function depositContributorFees() external payable onlyRegistry {
+        rewardPoolWei += msg.value;
+        emit ContributorFeesDeposited(msg.sender, msg.value);
     }
 
     function grantReward(address recipient, uint256 amount) external onlyOwner {
         if (recipient == address(0)) revert ZeroAddress();
+        _reserveReward(amount);
         pendingRewards[recipient] += amount;
     }
 
@@ -314,6 +362,8 @@ contract AttestiaStake {
         uint256 r = pendingRewards[msg.sender];
         if (r == 0) revert NoRewards();
         pendingRewards[msg.sender] = 0;
+        totalPendingRewardsWei -= r;
+        rewardPoolWei -= r;
         (bool ok,) = payable(msg.sender).call{value: r}("");
         if (!ok) revert TransferFailed();
         emit Rewarded(msg.sender, r);
@@ -336,7 +386,9 @@ contract AttestiaStake {
             roundId: roundId,
             phase: phase,
             variance: variance,
-            avg: avg
+            avg: avg,
+            sumScores: sum,
+            verifierCount: n
         });
 
         emit RoundScored(aggregateUid, roundId, phase, avg, variance, n);
@@ -389,11 +441,15 @@ contract AttestiaStake {
 
         uint256 deviation = _absDiff(score, ctx.avg);
         uint256 alignmentBps = _alignmentFromDeviation(deviation);
+        uint256 influenceBps = _influenceFromAverageShift(ctx, score);
+        uint256 weightedSignalBps =
+            (uint256(alignmentWeightBps) * alignmentBps + uint256(influenceWeightBps) * influenceBps) / BPS;
 
         uint256 phaseRewardMultiplier = _phaseRewardMultiplier(ctx.phase);
-        uint256 reward = baseRewardPerRound * phaseRewardMultiplier * alignmentBps * perf.reputationBps / uint256(BPS)
+        uint256 reward = baseRewardPerRound * phaseRewardMultiplier * weightedSignalBps * perf.reputationBps / uint256(BPS)
             / uint256(BPS) / uint256(BPS);
         if (reward > 0) {
+            _reserveReward(reward);
             pendingRewards[verifier] += reward;
         }
 
@@ -465,6 +521,12 @@ contract AttestiaStake {
         return (uint256(BPS) * uint256(BPS)) / (uint256(BPS) + xBps);
     }
 
+    function _influenceFromAverageShift(RoundContext memory ctx, uint16 score) internal pure returns (uint256) {
+        if (ctx.verifierCount <= 1) return BPS;
+        uint256 avgWithout = (ctx.sumScores - uint256(score)) / (ctx.verifierCount - 1);
+        return _absDiff(ctx.avg, avgWithout);
+    }
+
     function _updateReputation(uint16 currentRepBps, uint16 alignmentBps) internal view returns (uint16) {
         uint256 updated = (uint256(reputationLambdaBps) * currentRepBps + uint256(BPS - reputationLambdaBps) * alignmentBps)
             / BPS;
@@ -477,5 +539,13 @@ contract AttestiaStake {
         return a >= b ? a - b : b - a;
     }
 
-    receive() external payable {}
+    function _reserveReward(uint256 amount) internal {
+        if (totalPendingRewardsWei + amount > rewardPoolWei) revert InsufficientRewardPool();
+        totalPendingRewardsWei += amount;
+    }
+
+    receive() external payable {
+        rewardPoolWei += msg.value;
+        emit RewardsFunded(msg.value);
+    }
 }
