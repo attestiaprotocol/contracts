@@ -1,8 +1,9 @@
 /**
- * Register the two Attestia EAS schemas on Base (Sepolia or mainnet):
+ * Register the three Attestia EAS schemas on Base (Sepolia or mainnet):
  *
- * 1. **Attester scores (off-chain)** — each attester signs a score; no resolver.
- * 2. **Aggregate (on-chain)** — submitter publishes the rollup on-chain; optional
+ * 1. **Contributor media attestation (on-chain)** — media hash + URI + context + 12h deadline.
+ * 2. **Attester scores (off-chain)** — each attester signs a score; no resolver.
+ * 3. **Aggregate (on-chain)** — submitter publishes the rollup on-chain; optional
  *    `AttestiaAggregateResolver` via `ATTESTIA_AGGREGATE_RESOLVER` in `.env`.
  *
  * Keep schema strings in sync with `webapp/src/lib/eas/attestiaSchemas.ts`.
@@ -17,11 +18,17 @@ import {
 
 const SCHEMAS = [
   {
+    envContributorOnchain: "NEXT_PUBLIC_EAS_SCHEMA_UID_CONTRIBUTOR_MEDIA",
+    label: "ATTESTIA_CONTRIBUTOR_MEDIA_ONCHAIN",
+    definition:
+      "bytes32 contentHash,string mediaUri,string mediaContext,uint64 verificationDeadline",
+  },
+  {
     envScore: "NEXT_PUBLIC_EAS_SCHEMA_UID_SCORE_OFFCHAIN",
     envScoreServer: "EAS_SCHEMA_UID_SCORE_OFFCHAIN",
     label: "ATTESTIA_SCORE_OFFCHAIN",
     definition:
-      "bytes32 contentHash,string assetId,uint256 authenticityScore,uint256 deepfakeRiskBps,uint64 chainTimestamp",
+      "bytes32 contentHash,string assetId,uint256 authenticityScore,uint256 deepfakeRiskBps,string algorithm,uint64 chainTimestamp",
   },
   {
     envOnchain: "NEXT_PUBLIC_EAS_SCHEMA_UID",
@@ -45,7 +52,7 @@ async function main() {
   console.log("SchemaRegistry", EAS_SCHEMA_REGISTRY);
   console.log("Caller", deployer.address);
   console.log(
-    "\nRegistering 2 core schemas: (1) attester score off-chain, (2) aggregate on-chain.\n",
+    "\nRegistering 3 core schemas: (1) contributor media on-chain, (2) attester score off-chain, (3) aggregate on-chain.\n",
   );
 
   const aggregateResolver = onchainResolver();
@@ -70,6 +77,9 @@ async function main() {
     console.log(`${row.label}_UID=${uid}`);
     if ("envOnchain" in row) {
       console.log(`${row.envOnchain}=${uid}`);
+    }
+    if ("envContributorOnchain" in row) {
+      console.log(`${row.envContributorOnchain}=${uid}`);
     }
     if ("envScore" in row) {
       console.log(`${row.envScore}=${uid}`);

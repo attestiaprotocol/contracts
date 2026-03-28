@@ -1,8 +1,9 @@
 /**
- * Register only the **on-chain aggregate** schema (one of the two core Attestia schemas).
+ * Register only the **on-chain aggregate** schema (one of the three core Attestia schemas).
  * Same definition as `ATTESTIA_ONCHAIN_AGGREGATE_SCHEMA_RAW` in webapp/src/lib/eas/attestiaSchemas.ts.
  *
- * For the attester **off-chain** score schema use `registerEasOffchainSchemas.ts` or `eas:register-all`.
+ * For the contributor media on-chain schema use `registerEasContributorOnchainSchema.ts`.
+ * For the attester off-chain score schema use `registerEasOffchainSchemas.ts` or `eas:register-all`.
  *
  *   npx hardhat run scripts/registerEasOnchainSchema.ts --network baseSepolia
  *

@@ -8,6 +8,7 @@
     "deploy:aggregate-resolver": "hardhat run scripts/deployAggregateResolver.ts --network baseSepolia",
     "eas:register-all": "hardhat run scripts/registerEasSchemas.ts --network baseSepolia",
     "eas:register-onchain": "hardhat run scripts/registerEasOnchainSchema.ts --network baseSepolia",
+    "eas:register-contributor": "hardhat run scripts/registerEasContributorOnchainSchema.ts --network baseSepolia",
     "eas:register-offchain": "hardhat run scripts/registerEasOffchainSchemas.ts --network baseSepolia"
   },
   "devDependencies": {
