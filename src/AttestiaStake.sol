@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// @title AttestiaStake — stake, participant signup (submitters / attesters), slashing, rewards (Base)
-/// @dev After `stake()` meets `minStake`, call `registerAsSubmitter()` or `registerAsAttester()` once.
+/// @dev Submitters can register without stake. Attesters must satisfy `minStake`.
 contract AttestiaStake {
     enum ParticipantRole {
         None,
@@ -11,12 +11,74 @@ contract AttestiaStake {
     }
 
     address public owner;
+    address public performanceReporter;
     uint256 public minStake;
+    uint256 public baseRewardPerRound;
 
     mapping(address => uint256) public staked;
     mapping(address => uint256) public pendingRewards;
     mapping(address => uint256) public slashAccumulator;
     mapping(address => ParticipantRole) public roleOf;
+
+    uint64 public currentRoundId;
+
+    uint16 public constant BPS = 10_000;
+    uint16 public phase0RewardBps = 5_000;
+    uint16 public phase1RewardBps = 8_000;
+    uint16 public phase2RewardBps = 10_000;
+
+    uint16 public phase1DeviationThresholdBps = 2_500; // 0.25
+    uint16 public phase2DeviationThresholdBps = 2_000; // 0.20
+    uint256 public phase1VarianceThresholdBps2 = 2_000_000; // 0.02 on [0,1] scores
+    uint16 public phase1SlashBps = 1_000; // 10%
+    uint16 public phase2SlashBps = 3_000; // 30%
+
+    uint16 public alphaBps = 40_000; // alpha = 4.0
+    uint16 public reputationLambdaBps = 8_000; // lambda = 0.8
+    uint16 public reputationMinBps = 5_000; // 0.5x
+    uint16 public reputationMaxBps = 15_000; // 1.5x
+
+    struct VerifierPerformance {
+        uint64 evaluations;
+        uint64 slashCount;
+        uint64 consecutiveGood;
+        uint64 goodCount;
+        uint64 lastRoundId;
+        uint16 reputationBps; // [0.5x, 1.5x], initialized at 1.0x
+    }
+
+    struct RoundContext {
+        bytes32 aggregateUid;
+        uint64 roundId;
+        NetworkPhase phase;
+        uint256 variance;
+        uint256 avg;
+    }
+
+    struct EconomicConfig {
+        uint256 baseRewardPerRound;
+        uint16 phase0RewardBps;
+        uint16 phase1RewardBps;
+        uint16 phase2RewardBps;
+        uint16 phase1DeviationThresholdBps;
+        uint16 phase2DeviationThresholdBps;
+        uint256 phase1VarianceThresholdBps2;
+        uint16 phase1SlashBps;
+        uint16 phase2SlashBps;
+        uint16 alphaBps;
+        uint16 reputationLambdaBps;
+        uint16 reputationMinBps;
+        uint16 reputationMaxBps;
+    }
+
+    enum NetworkPhase {
+        Bootstrapping,
+        WeakConsensus,
+        Mature
+    }
+
+    mapping(address => VerifierPerformance) public verifierPerformance;
+    mapping(address => uint64) public suspendedUntilRound;
 
     address[] private _submitters;
     address[] private _attesters;
@@ -31,6 +93,27 @@ contract AttestiaStake {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event RegisteredSubmitter(address indexed account);
     event RegisteredAttester(address indexed account);
+    event PerformanceReporterSet(address indexed reporter);
+    event BaseRewardPerRoundSet(uint256 amount);
+    event PhaseRewardBpsSet(uint16 phase0RewardBps, uint16 phase1RewardBps, uint16 phase2RewardBps);
+    event DeviationThresholdsSet(uint16 phase1DeviationThresholdBps, uint16 phase2DeviationThresholdBps);
+    event SlashingParamsSet(uint256 phase1VarianceThresholdBps2, uint16 phase1SlashBps, uint16 phase2SlashBps);
+    event ReputationParamsSet(uint16 alphaBps, uint16 reputationLambdaBps, uint16 reputationMinBps, uint16 reputationMaxBps);
+    event RoundScored(
+        bytes32 indexed aggregateUid,
+        uint64 indexed roundId,
+        NetworkPhase phase,
+        uint256 averageScoreBps,
+        uint256 varianceBpsSquared,
+        uint256 verifierCount
+    );
+    event VerifierRoundOutcome(
+        bytes32 indexed aggregateUid,
+        uint64 indexed roundId,
+        address indexed verifier,
+        uint256 rewardWei,
+        uint256 slashWei
+    );
 
     error BelowMinStake();
     error InsufficientStake();
@@ -40,6 +123,13 @@ contract AttestiaStake {
     error NotOwner();
     error ZeroAddress();
     error AlreadyRegistered();
+    error NotPerformanceReporter();
+    error InvalidInputLength();
+    error EmptyScores();
+    error InvalidScore();
+    error InvalidVerifier();
+    error DuplicateVerifier();
+    error InvalidParam();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -53,8 +143,14 @@ contract AttestiaStake {
         _locked = 0;
     }
 
+    modifier onlyPerformanceReporter() {
+        if (msg.sender != performanceReporter) revert NotPerformanceReporter();
+        _;
+    }
+
     constructor(uint256 minStakeWei) {
         owner = msg.sender;
+        performanceReporter = msg.sender;
         minStake = minStakeWei;
     }
 
@@ -68,6 +164,77 @@ contract AttestiaStake {
         minStake = newMin;
     }
 
+    function setPerformanceReporter(address reporter) external onlyOwner {
+        if (reporter == address(0)) revert ZeroAddress();
+        performanceReporter = reporter;
+        emit PerformanceReporterSet(reporter);
+    }
+
+    function setBaseRewardPerRound(uint256 amount) external onlyOwner {
+        baseRewardPerRound = amount;
+        emit BaseRewardPerRoundSet(amount);
+    }
+
+    function setPhaseRewardBps(uint16 phase0, uint16 phase1, uint16 phase2) external onlyOwner {
+        if (phase0 > BPS || phase1 > BPS || phase2 > BPS) revert InvalidParam();
+        phase0RewardBps = phase0;
+        phase1RewardBps = phase1;
+        phase2RewardBps = phase2;
+        emit PhaseRewardBpsSet(phase0, phase1, phase2);
+    }
+
+    function setDeviationThresholds(uint16 phase1DeviationBps, uint16 phase2DeviationBps) external onlyOwner {
+        if (phase1DeviationBps > BPS || phase2DeviationBps > BPS) revert InvalidParam();
+        phase1DeviationThresholdBps = phase1DeviationBps;
+        phase2DeviationThresholdBps = phase2DeviationBps;
+        emit DeviationThresholdsSet(phase1DeviationBps, phase2DeviationBps);
+    }
+
+    function setSlashingParams(uint256 phase1VarianceBps2, uint16 phase1SlashRateBps, uint16 phase2SlashRateBps)
+        external
+        onlyOwner
+    {
+        if (phase1VarianceBps2 > uint256(BPS) * uint256(BPS)) revert InvalidParam();
+        if (phase1SlashRateBps > BPS || phase2SlashRateBps > BPS) revert InvalidParam();
+        phase1VarianceThresholdBps2 = phase1VarianceBps2;
+        phase1SlashBps = phase1SlashRateBps;
+        phase2SlashBps = phase2SlashRateBps;
+        emit SlashingParamsSet(phase1VarianceBps2, phase1SlashRateBps, phase2SlashRateBps);
+    }
+
+    function setReputationParams(uint16 alpha, uint16 lambda, uint16 repMin, uint16 repMax) external onlyOwner {
+        if (lambda > BPS) revert InvalidParam();
+        if (repMin > repMax) revert InvalidParam();
+        if (repMax > 5 * BPS) revert InvalidParam();
+        alphaBps = alpha;
+        reputationLambdaBps = lambda;
+        reputationMinBps = repMin;
+        reputationMaxBps = repMax;
+        emit ReputationParamsSet(alpha, lambda, repMin, repMax);
+    }
+
+    function networkPhase() public view returns (NetworkPhase) {
+        return _phaseFromActiveVerifiers(_activeAttesterCount(currentRoundId + 1));
+    }
+
+    function getEconomicConfig() external view returns (EconomicConfig memory cfg) {
+        cfg = EconomicConfig({
+            baseRewardPerRound: baseRewardPerRound,
+            phase0RewardBps: phase0RewardBps,
+            phase1RewardBps: phase1RewardBps,
+            phase2RewardBps: phase2RewardBps,
+            phase1DeviationThresholdBps: phase1DeviationThresholdBps,
+            phase2DeviationThresholdBps: phase2DeviationThresholdBps,
+            phase1VarianceThresholdBps2: phase1VarianceThresholdBps2,
+            phase1SlashBps: phase1SlashBps,
+            phase2SlashBps: phase2SlashBps,
+            alphaBps: alphaBps,
+            reputationLambdaBps: reputationLambdaBps,
+            reputationMinBps: reputationMinBps,
+            reputationMaxBps: reputationMaxBps
+        });
+    }
+
     function stake() external payable {
         if (msg.value == 0) revert InsufficientStake();
         if (staked[msg.sender] + msg.value < minStake) revert BelowMinStake();
@@ -75,10 +242,9 @@ contract AttestiaStake {
         emit Staked(msg.sender, msg.value);
     }
 
-    /// @notice Requires `staked[msg.sender] >= minStake` (e.g. after `stake()` is confirmed).
+    /// @notice Contributor registration is stake-free; per-media stake is handled by `AttestiaRegistry`.
     function registerAsSubmitter() external {
         if (roleOf[msg.sender] != ParticipantRole.None) revert AlreadyRegistered();
-        if (staked[msg.sender] < minStake) revert BelowMinStake();
         roleOf[msg.sender] = ParticipantRole.Submitter;
         _submitters.push(msg.sender);
         emit RegisteredSubmitter(msg.sender);
@@ -151,6 +317,164 @@ contract AttestiaStake {
         (bool ok,) = payable(msg.sender).call{value: r}("");
         if (!ok) revert TransferFailed();
         emit Rewarded(msg.sender, r);
+    }
+
+    /// @notice Called by the aggregate resolver to score verifier round performance.
+    /// @dev Scores are expected in [0, 10_000] where 10_000 maps to 1.0.
+    function processAggregateScores(bytes32 aggregateUid, address[] calldata verifiers, uint16[] calldata scores)
+        external
+        onlyPerformanceReporter
+    {
+        uint64 roundId = ++currentRoundId;
+        uint256 n = verifiers.length;
+        uint256 sum = _validateAndSumScores(verifiers, scores);
+        uint256 avg = sum / n;
+        uint256 variance = _computeVariance(scores, avg);
+        NetworkPhase phase = _phaseFromActiveVerifiers(_activeAttesterCount(roundId));
+        RoundContext memory ctx = RoundContext({
+            aggregateUid: aggregateUid,
+            roundId: roundId,
+            phase: phase,
+            variance: variance,
+            avg: avg
+        });
+
+        emit RoundScored(aggregateUid, roundId, phase, avg, variance, n);
+
+        for (uint256 i = 0; i < n; i++) {
+            address verifier = verifiers[i];
+            if (suspendedUntilRound[verifier] >= roundId) {
+                continue;
+            }
+            _scoreVerifier(ctx, verifier, scores[i]);
+        }
+    }
+
+    function _validateAndSumScores(address[] calldata verifiers, uint16[] calldata scores)
+        internal
+        view
+        returns (uint256 sum)
+    {
+        uint256 n = verifiers.length;
+        if (n == 0) revert EmptyScores();
+        if (n != scores.length) revert InvalidInputLength();
+
+        for (uint256 i = 0; i < n; i++) {
+            address verifier = verifiers[i];
+            uint16 score = scores[i];
+            if (score > BPS) revert InvalidScore();
+            if (roleOf[verifier] != ParticipantRole.Attester) revert InvalidVerifier();
+            if (staked[verifier] < minStake) revert InvalidVerifier();
+            for (uint256 j = 0; j < i; j++) {
+                if (verifiers[j] == verifier) revert DuplicateVerifier();
+            }
+            sum += score;
+        }
+    }
+
+    function _computeVariance(uint16[] calldata scores, uint256 avg) internal pure returns (uint256 variance) {
+        uint256 n = scores.length;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 d = _absDiff(scores[i], avg);
+            variance += d * d;
+        }
+        variance /= n;
+    }
+
+    function _scoreVerifier(RoundContext memory ctx, address verifier, uint16 score) internal {
+        VerifierPerformance storage perf = verifierPerformance[verifier];
+        if (perf.reputationBps == 0) {
+            perf.reputationBps = BPS;
+        }
+
+        uint256 deviation = _absDiff(score, ctx.avg);
+        uint256 alignmentBps = _alignmentFromDeviation(deviation);
+
+        uint256 phaseRewardMultiplier = _phaseRewardMultiplier(ctx.phase);
+        uint256 reward = baseRewardPerRound * phaseRewardMultiplier * alignmentBps * perf.reputationBps / uint256(BPS)
+            / uint256(BPS) / uint256(BPS);
+        if (reward > 0) {
+            pendingRewards[verifier] += reward;
+        }
+
+        bool shouldSlash;
+        uint16 slashRateBps;
+        if (ctx.phase == NetworkPhase.WeakConsensus) {
+            shouldSlash = deviation > phase1DeviationThresholdBps && ctx.variance < phase1VarianceThresholdBps2;
+            slashRateBps = phase1SlashBps;
+        } else if (ctx.phase == NetworkPhase.Mature) {
+            shouldSlash = deviation > phase2DeviationThresholdBps;
+            slashRateBps = phase2SlashBps;
+        }
+
+        uint256 slashAmount;
+        if (shouldSlash) {
+            uint256 s = staked[verifier];
+            slashAmount = (s * slashRateBps) / BPS;
+            staked[verifier] = s - slashAmount;
+            slashAccumulator[verifier] += slashAmount;
+            perf.slashCount += 1;
+            perf.consecutiveGood = 0;
+            if (ctx.phase == NetworkPhase.WeakConsensus) {
+                suspendedUntilRound[verifier] = ctx.roundId + 1;
+            }
+            emit Slashed(verifier, slashAmount, "aggregate_outlier");
+        } else {
+            perf.consecutiveGood += 1;
+            perf.goodCount += 1;
+        }
+
+        perf.evaluations += 1;
+        perf.lastRoundId = ctx.roundId;
+        perf.reputationBps = _updateReputation(perf.reputationBps, uint16(alignmentBps));
+
+        emit VerifierRoundOutcome(
+            ctx.aggregateUid,
+            ctx.roundId,
+            verifier,
+            reward,
+            slashAmount
+        );
+    }
+
+    function _activeAttesterCount(uint64 roundId) internal view returns (uint256 count) {
+        uint256 total = _attesters.length;
+        for (uint256 i = 0; i < total; i++) {
+            address verifier = _attesters[i];
+            if (staked[verifier] >= minStake && suspendedUntilRound[verifier] < roundId) {
+                count++;
+            }
+        }
+    }
+
+    function _phaseFromActiveVerifiers(uint256 activeVerifiers) internal pure returns (NetworkPhase) {
+        if (activeVerifiers < 5) return NetworkPhase.Bootstrapping;
+        if (activeVerifiers <= 20) return NetworkPhase.WeakConsensus;
+        return NetworkPhase.Mature;
+    }
+
+    function _phaseRewardMultiplier(NetworkPhase phase) internal view returns (uint256) {
+        if (phase == NetworkPhase.Bootstrapping) return phase0RewardBps;
+        if (phase == NetworkPhase.WeakConsensus) return phase1RewardBps;
+        return phase2RewardBps;
+    }
+
+    function _alignmentFromDeviation(uint256 deviationBps) internal view returns (uint256) {
+        // Inverse approximation of exp(-alpha * d): 1 / (1 + alpha*d).
+        uint256 xBps = (uint256(alphaBps) * deviationBps) / BPS;
+        return (uint256(BPS) * uint256(BPS)) / (uint256(BPS) + xBps);
+    }
+
+    function _updateReputation(uint16 currentRepBps, uint16 alignmentBps) internal view returns (uint16) {
+        uint256 updated = (uint256(reputationLambdaBps) * currentRepBps + uint256(BPS - reputationLambdaBps) * alignmentBps)
+            / BPS;
+        if (updated < reputationMinBps) return reputationMinBps;
+        if (updated > reputationMaxBps) return reputationMaxBps;
+        return uint16(updated);
+    }
+
+    function _absDiff(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a >= b ? a - b : b - a;
     }
 
     receive() external payable {}

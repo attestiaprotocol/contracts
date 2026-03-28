@@ -3,6 +3,8 @@
  *
  *   npx hardhat run scripts/deployAggregateResolver.ts --network baseSepolia
  *
+ * Requires `ATTESTIA_STAKE` (deployed AttestiaStake address).
+ *
  * Then register the on-chain aggregate schema with this resolver address, or set
  * ATTESTIA_AGGREGATE_RESOLVER before running registerEasOnchainSchema.ts.
  */
@@ -22,12 +24,19 @@ async function main() {
     throw new Error(`No EAS address configured for chainId ${chainId}`);
   }
 
+  const stakeRaw = process.env.ATTESTIA_STAKE?.trim();
+  if (!stakeRaw || !ethers.isAddress(stakeRaw)) {
+    throw new Error("ATTESTIA_STAKE must be set to a valid contract address");
+  }
+  const stake = ethers.getAddress(stakeRaw);
+
   console.log("Chain", chainId);
   console.log("EAS", eas);
+  console.log("Stake", stake);
   console.log("Deployer (authorized attester)", deployer.address);
 
   const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
-  const resolver = await Resolver.deploy(eas);
+  const resolver = await Resolver.deploy(eas, stake);
   await resolver.waitForDeployment();
   const addr = await resolver.getAddress();
 

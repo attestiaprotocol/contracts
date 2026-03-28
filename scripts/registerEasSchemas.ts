@@ -32,9 +32,10 @@ const SCHEMAS = [
   },
   {
     envOnchain: "NEXT_PUBLIC_EAS_SCHEMA_UID",
+    envOnchainServer: "EAS_SCHEMA_UID_AGGREGATE_ONCHAIN",
     label: "ATTESTIA_ONCHAIN_AGGREGATE",
     definition:
-      "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash",
+      "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash,bytes32 proofCommitment",
   },
 ] as const;
 
@@ -77,6 +78,7 @@ async function main() {
     console.log(`${row.label}_UID=${uid}`);
     if ("envOnchain" in row) {
       console.log(`${row.envOnchain}=${uid}`);
+      console.log(`${row.envOnchainServer}=${uid}`);
     }
     if ("envContributorOnchain" in row) {
       console.log(`${row.envContributorOnchain}=${uid}`);

@@ -14,7 +14,7 @@ import { ethers } from "hardhat";
 import { ensureSchemaRegistered } from "./easSchemaRegistryUtils";
 
 const SCHEMA =
-  "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash";
+  "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash,bytes32 proofCommitment";
 
 function resolverFromEnv(): string {
   const raw = process.env.ATTESTIA_AGGREGATE_RESOLVER?.trim();
@@ -44,6 +44,7 @@ async function main() {
     console.log("(schema already registered — same UID as below)");
   }
   console.log("NEXT_PUBLIC_EAS_SCHEMA_UID=" + uid);
+  console.log("EAS_SCHEMA_UID_AGGREGATE_ONCHAIN=" + uid);
 }
 
 main().catch((e) => {
