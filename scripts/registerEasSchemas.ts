@@ -35,7 +35,7 @@ const SCHEMAS = [
     envOnchainServer: "EAS_SCHEMA_UID_AGGREGATE_ONCHAIN",
     label: "ATTESTIA_ONCHAIN_AGGREGATE",
     definition:
-      "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash,bytes32 proofCommitment",
+      "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiers,uint16[] scores",
   },
 ] as const;
 

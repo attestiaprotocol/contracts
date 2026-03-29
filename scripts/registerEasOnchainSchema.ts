@@ -14,7 +14,7 @@ import { ethers } from "hardhat";
 import { ensureSchemaRegistered } from "./easSchemaRegistryUtils";
 
 const SCHEMA =
-  "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash,bytes32 proofCommitment";
+  "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiers,uint16[] scores";
 
 function resolverFromEnv(): string {
   const raw = process.env.ATTESTIA_AGGREGATE_RESOLVER?.trim();

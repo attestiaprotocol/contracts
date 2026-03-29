@@ -40,6 +40,18 @@ async function main() {
   await resolver.waitForDeployment();
   const addr = await resolver.getAddress();
 
+  const stakeContract = await ethers.getContractAt("AttestiaStake", stake);
+  const stakeOwner = await stakeContract.owner();
+  if (stakeOwner.toLowerCase() === deployer.address.toLowerCase()) {
+    const tx = await stakeContract.setPerformanceReporter(addr);
+    await tx.wait();
+    console.log("Stake performanceReporter ->", addr);
+  } else {
+    console.log("WARNING: deployer is not AttestiaStake owner.");
+    console.log("Run this as stake owner:");
+    console.log(`  setPerformanceReporter(${addr})`);
+  }
+
   console.log("\nATTESTIA_AGGREGATE_RESOLVER=" + addr);
   console.log("authorizedAttester", await resolver.authorizedAttester());
 }

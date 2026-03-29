@@ -16,13 +16,10 @@ interface IAttestiaStakePerformance {
 contract AttestiaAggregateResolver is SchemaResolver {
     address public immutable authorizedAttester;
     IAttestiaStakePerformance public immutable stake;
-    mapping(bytes32 => bool) public aggregateAccepted;
-    mapping(bytes32 => bool) public aggregateProcessed;
 
     error UnauthorizedAttester();
     error ZeroAddress();
-    error UnknownAggregateUid();
-    error AggregateAlreadyProcessed();
+    error InvalidScoreVectors();
 
     event AggregateAccepted(bytes32 indexed aggregateUid, address indexed attester);
     event ReviewerScoresPublished(bytes32 indexed aggregateUid, uint256 verifierCount);
@@ -41,21 +38,24 @@ contract AttestiaAggregateResolver is SchemaResolver {
         if (attestation.attester != authorizedAttester) {
             revert UnauthorizedAttester();
         }
-        aggregateAccepted[attestation.uid] = true;
-        emit AggregateAccepted(attestation.uid, attestation.attester);
-        return true;
-    }
 
-    /// @notice Publishes reviewer wallet-score pairs and triggers reward/slashing in AttestiaStake.
-    function publishReviewerScores(bytes32 aggregateUid, address[] calldata verifiers, uint16[] calldata scores)
-        external
-    {
-        if (msg.sender != authorizedAttester) revert UnauthorizedAttester();
-        if (!aggregateAccepted[aggregateUid]) revert UnknownAggregateUid();
-        if (aggregateProcessed[aggregateUid]) revert AggregateAlreadyProcessed();
-        aggregateProcessed[aggregateUid] = true;
-        stake.processAggregateScores(aggregateUid, verifiers, scores);
-        emit ReviewerScoresPublished(aggregateUid, verifiers.length);
+        (
+            ,
+            ,
+            uint32 numVerifiers,
+            ,
+            ,
+            ,
+            address[] memory verifiers,
+            uint16[] memory scores
+        ) = abi.decode(attestation.data, (bytes32, uint256, uint32, uint32, bytes32, bytes32, address[], uint16[]));
+
+        if (verifiers.length != numVerifiers || scores.length != numVerifiers) revert InvalidScoreVectors();
+
+        stake.processAggregateScores(attestation.uid, verifiers, scores);
+        emit AggregateAccepted(attestation.uid, attestation.attester);
+        emit ReviewerScoresPublished(attestation.uid, verifiers.length);
+        return true;
     }
 
     function onRevoke(Attestation calldata /*attestation*/, uint256 /*value*/)
