@@ -10,7 +10,7 @@ contract AttestiaRegistry {
     uint256 public constant MAX_CONTRIBUTOR_MEDIA_STAKE = 0.02 ether;
     uint16 public constant CONTRIBUTOR_REFUND_BPS = 9_000; // 90%
     uint256 public contributorMediaStake = 0.01 ether;
-    uint64 public verificationWindow = 12 hours;
+    uint64 public verificationWindow = 15 minutes;
 
     AttestiaStake public immutable stake;
     address public governance;
