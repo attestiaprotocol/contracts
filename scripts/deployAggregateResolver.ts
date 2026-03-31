@@ -8,12 +8,34 @@
  * Then register the on-chain aggregate schema with this resolver address, or set
  * ATTESTIA_AGGREGATE_RESOLVER before running registerEasOnchainSchema.ts.
  */
-import { ethers } from "hardhat";
+import { ethers, network, run } from "hardhat";
 
 const EAS_BY_CHAIN: Record<number, string> = {
   84532: "0x4200000000000000000000000000000000000021",
   8453: "0x4200000000000000000000000000000000000021",
 };
+
+async function verifyContract(address: string, constructorArguments: unknown[]) {
+  if (network.name === "hardhat" || network.name === "localhost") {
+    console.log(`Skipping verification on ${network.name}`);
+    return;
+  }
+
+  // Let the explorer index bytecode before submitting verification.
+  await new Promise((resolve) => setTimeout(resolve, 20_000));
+
+  try {
+    await run("verify:verify", { address, constructorArguments });
+    console.log("Verified", address);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("already verified")) {
+      console.log("Already verified", address);
+      return;
+    }
+    throw error;
+  }
+}
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -39,6 +61,7 @@ async function main() {
   const resolver = await Resolver.deploy(eas, stake);
   await resolver.waitForDeployment();
   const addr = await resolver.getAddress();
+  await verifyContract(addr, [eas, stake]);
 
   const stakeContract = await ethers.getContractAt("AttestiaStake", stake);
   const stakeOwner = await stakeContract.owner();

@@ -58,12 +58,13 @@ contract AttestiaAggregateResolver is SchemaResolver {
         return true;
     }
 
-    function onRevoke(Attestation calldata /*attestation*/, uint256 /*value*/)
+    function onRevoke(Attestation calldata attestation, uint256 /*value*/)
         internal
-        pure
+        view
         override
         returns (bool)
     {
+        if (attestation.attester != authorizedAttester) revert UnauthorizedAttester();
         return true;
     }
 }

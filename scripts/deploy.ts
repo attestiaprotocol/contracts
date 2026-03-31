@@ -1,4 +1,26 @@
-import { ethers, network } from "hardhat";
+import { ethers, network, run } from "hardhat";
+
+async function verifyContract(address: string, constructorArguments: unknown[]) {
+  if (network.name === "hardhat" || network.name === "localhost") {
+    console.log(`Skipping verification on ${network.name}`);
+    return;
+  }
+
+  // Let the explorer index bytecode before submitting verification.
+  await new Promise((resolve) => setTimeout(resolve, 20_000));
+
+  try {
+    await run("verify:verify", { address, constructorArguments });
+    console.log("Verified", address);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("already verified")) {
+      console.log("Already verified", address);
+      return;
+    }
+    throw error;
+  }
+}
 
 async function main() {
   const minStakeWei = process.env.MIN_STAKE_WEI
@@ -14,11 +36,13 @@ async function main() {
   await stake.waitForDeployment();
   const stakeAddr = await stake.getAddress();
   console.log("AttestiaStake", stakeAddr);
+  await verifyContract(stakeAddr, [minStakeWei]);
 
   const Registry = await ethers.getContractFactory("AttestiaRegistry");
   const registry = await Registry.deploy(stakeAddr);
   await registry.waitForDeployment();
   const regAddr = await registry.getAddress();
+  await verifyContract(regAddr, [stakeAddr]);
   await stake.setRegistry(regAddr);
   console.log("AttestiaRegistry", regAddr);
   console.log("Registry linked in AttestiaStake");
