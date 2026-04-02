@@ -6,13 +6,12 @@ import {AttestiaStake} from "./AttestiaStake.sol";
 /// @title AttestiaRegistry — on-chain media handles for the Attestia Protocol (Base)
 /// @dev Registered submitters lock a fixed per-media stake on submission.
 contract AttestiaRegistry {
-    uint256 public constant MIN_CONTRIBUTOR_MEDIA_STAKE = 0.005 ether;
-    uint256 public constant MAX_CONTRIBUTOR_MEDIA_STAKE = 0.02 ether;
     uint16 public constant CONTRIBUTOR_REFUND_BPS = 9_000; // 90%
     uint256 public contributorMediaStake = 0.01 ether;
     uint64 public verificationWindow = 15 minutes;
 
     AttestiaStake public immutable stake;
+    IEAS public immutable eas;
     address public governance;
 
     struct Media {
@@ -52,15 +51,17 @@ contract AttestiaRegistry {
     error AlreadyFinalized();
     error NotRegisteredSubmitter();
     error InvalidContributorStake();
-    error InvalidContributorStakeRange();
     error ZeroAddress();
     error InvalidVerificationWindow();
     error VerificationDeadlineNotReached();
     error TransferFailed();
     error ReentrantCall();
+    error InvalidAggregateAttestation();
+    error InvalidAggregateVectors();
 
-    constructor(AttestiaStake _stake) {
+    constructor(AttestiaStake _stake, IEAS _eas) {
         stake = _stake;
+        eas = _eas;
         governance = msg.sender;
     }
 
@@ -101,9 +102,7 @@ contract AttestiaRegistry {
     }
 
     function setContributorMediaStake(uint256 newStake) external onlyGovernance {
-        if (newStake < MIN_CONTRIBUTOR_MEDIA_STAKE || newStake > MAX_CONTRIBUTOR_MEDIA_STAKE) {
-            revert InvalidContributorStakeRange();
-        }
+        if (newStake == 0) revert InvalidContributorStake();
         uint256 previous = contributorMediaStake;
         contributorMediaStake = newStake;
         emit ContributorStakeSet(previous, newStake);
@@ -141,7 +140,7 @@ contract AttestiaRegistry {
     }
 
     /// @notice Finalize with aggregate UID and settle contributor stake after deadline.
-    function finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid, uint32 numScoresProvided)
+    function finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid)
         external
         nonReentrant
         onlyAssetOwner(assetId)
@@ -149,6 +148,9 @@ contract AttestiaRegistry {
         Media storage m = _media[assetId];
         if (m.easAttestationUid != bytes32(0)) revert AlreadyFinalized();
         if (block.timestamp < m.verificationDeadline) revert VerificationDeadlineNotReached();
+
+        uint32 numScoresProvided = _numScoresFromAggregateAttestation(m.contentHash, easAttestationUid);
+
         m.easAttestationUid = easAttestationUid;
         m.numScoresProvided = numScoresProvided;
         m.stakeSettled = true;
@@ -170,4 +172,50 @@ contract AttestiaRegistry {
 
         emit MediaFinalized(assetId, easAttestationUid, numScoresProvided, refund, fee);
     }
+
+    function _numScoresFromAggregateAttestation(bytes32 contentHash, bytes32 uid) internal view returns (uint32) {
+        IEAS.Attestation memory a = eas.getAttestation(uid);
+        if (a.uid == bytes32(0)) revert InvalidAggregateAttestation();
+        if (a.data.length == 0) revert InvalidAggregateAttestation();
+
+        (
+            bytes32 attestedContentHash,
+            uint256 aggregateScore,
+            uint32 numVerifiers,
+            uint32 confidenceBps,
+            bytes32 payloadHash,
+            bytes32 proofCommitment,
+            address[] memory verifiers,
+            uint16[] memory scores
+        ) = abi.decode(a.data, (bytes32, uint256, uint32, uint32, bytes32, bytes32, address[], uint16[]));
+
+        // Silence unused locals (kept for schema compatibility / forward-proofing).
+        aggregateScore;
+        confidenceBps;
+        payloadHash;
+        proofCommitment;
+
+        if (attestedContentHash != contentHash) revert InvalidAggregateAttestation();
+        if (verifiers.length != scores.length) revert InvalidAggregateVectors();
+        if (verifiers.length != uint256(numVerifiers)) revert InvalidAggregateVectors();
+
+        return numVerifiers;
+    }
+}
+
+interface IEAS {
+    struct Attestation {
+        bytes32 uid;
+        bytes32 schema;
+        uint64 time;
+        uint64 expirationTime;
+        uint64 revocationTime;
+        bytes32 refUID;
+        address recipient;
+        address attester;
+        bool revocable;
+        bytes data;
+    }
+
+    function getAttestation(bytes32 uid) external view returns (Attestation memory);
 }

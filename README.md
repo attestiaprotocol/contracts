@@ -2,6 +2,73 @@
 
 Solidity for `AttestiaStake`, `AttestiaRegistry`, and `AttestiaAggregateResolver` (EAS schema resolver for on-chain aggregate attestations), compiled and tested with [Hardhat](https://hardhat.org/).
 
+## Protocol interactions (quick mental model)
+
+### Who does what
+
+- `AttestiaStake`: participant roles, attester stake, rewards/slashing, and network phase.
+- `AttestiaRegistry`: media registration + contributor escrow stake + final settlement/refund.
+- `AttestiaAggregateResolver`: validates aggregate attestation publisher and forwards verifier vectors to `AttestiaStake`.
+- `EAS`: attestation storage (contributor media attestation + aggregate attestation payload).
+
+### End-to-end flow
+
+```mermaid
+sequenceDiagram
+    actor S as Submitter
+    actor A as Attester(s)
+    participant R as AttestiaRegistry
+    participant E as EAS
+    participant V as AttestiaAggregateResolver
+    participant K as AttestiaStake
+
+    S->>R: registerMedia(contentHash, uri) + contributor stake
+    R-->>S: assetId + verificationDeadline
+    Note over S,A: Off-chain review window
+    A-->>E: off-chain score attestations/signatures
+
+    S->>E: publish aggregate attestation (verifiers[], scores[])
+    E->>V: resolver onAttest(attestation)
+    V->>K: processAggregateScores(uid, verifiers, scores)
+    K-->>K: rewards/slashing + phase metrics
+
+    S->>R: finalizeWithEAS(assetId, aggregateUid) after deadline
+    R->>E: getAttestation(aggregateUid)
+    R-->>R: decode attestation, derive numVerifiers
+    alt numVerifiers == 0
+      R-->>S: full contributor refund
+    else numVerifiers > 0
+      R->>K: depositContributorFees(fee)
+      R-->>S: partial contributor refund
+    end
+```
+
+### Function interaction map
+
+- Submitter lifecycle:
+  - `AttestiaStake.registerAsSubmitter()`
+  - `AttestiaRegistry.registerMedia(...)`
+  - `AttestiaRegistry.finalizeWithEAS(assetId, aggregateUid)`
+- Attester lifecycle:
+  - `AttestiaStake.stake()` then `AttestiaStake.registerAsAttester()`
+  - aggregate publish triggers `AttestiaAggregateResolver.onAttest(...)`
+  - resolver calls `AttestiaStake.processAggregateScores(...)`
+- Settlement rule:
+  - `AttestiaRegistry` reads aggregate data from EAS and computes `numScoresProvided` on-chain.
+  - `numScoresProvided == 0` => full contributor refund.
+  - `numScoresProvided > 0` => partial contributor refund + network fee routed to `AttestiaStake`.
+
+### Media state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Registered: registerMedia
+    Registered --> ReviewWindow: deadline active
+    ReviewWindow --> Expired: verificationDeadline reached
+    Expired --> Finalized: finalizeWithEAS
+    Finalized --> [*]
+```
+
 ## Prerequisites
 
 - Node.js 20+
