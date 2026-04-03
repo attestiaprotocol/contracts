@@ -6,6 +6,7 @@
     "test": "hardhat test",
     "deploy:base-sepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
     "deploy:aggregate-resolver": "hardhat run scripts/deployAggregateResolver.ts --network baseSepolia",
+    "deploy:contributor-resolver": "hardhat run scripts/deployContributorResolver.ts --network baseSepolia",
     "registry:set-window": "hardhat run scripts/setRegistryVerificationWindow.ts --network baseSepolia",
     "eas:register-all": "hardhat run scripts/registerEasSchemas.ts --network baseSepolia",
     "eas:register-onchain": "hardhat run scripts/registerEasOnchainSchema.ts --network baseSepolia",

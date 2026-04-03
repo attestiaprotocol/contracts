@@ -1,6 +1,6 @@
 # Attestia contracts
 
-Solidity for `AttestiaStake`, `AttestiaRegistry`, and `AttestiaAggregateResolver` (EAS schema resolver for on-chain aggregate attestations), compiled and tested with [Hardhat](https://hardhat.org/).
+Solidity for `AttestiaStake`, `AttestiaRegistry`, `AttestiaContributorResolver`, and `AttestiaAggregateResolver` (EAS schema resolvers), compiled and tested with [Hardhat](https://hardhat.org/).
 
 ## Protocol interactions (quick mental model)
 
@@ -8,6 +8,7 @@ Solidity for `AttestiaStake`, `AttestiaRegistry`, and `AttestiaAggregateResolver
 
 - `AttestiaStake`: participant roles, attester stake, rewards/slashing, and network phase.
 - `AttestiaRegistry`: media registration + contributor escrow stake + final settlement/refund.
+- `AttestiaContributorResolver`: validates contributor membership and forwards contributor media metadata to `AttestiaRegistry`.
 - `AttestiaAggregateResolver`: validates aggregate attestation publisher and forwards verifier vectors to `AttestiaStake`.
 - `EAS`: attestation storage (contributor media attestation + aggregate attestation payload).
 
@@ -19,11 +20,14 @@ sequenceDiagram
     actor A as Attester(s)
     participant R as AttestiaRegistry
     participant E as EAS
+    participant C as AttestiaContributorResolver
     participant V as AttestiaAggregateResolver
     participant K as AttestiaStake
 
-    S->>R: registerMedia(contentHash, uri) + contributor stake
-    R-->>S: assetId + verificationDeadline
+    S->>E: publish contributor media attestation + contributor stake
+    E->>C: contributor resolver onAttest(attestation)
+    C->>R: onContributorMediaAttested(...) + stake escrow
+    R-->>S: assetId + protocol verificationDeadline
     Note over S,A: Off-chain review window
     A-->>E: off-chain score attestations/signatures
 
@@ -32,7 +36,7 @@ sequenceDiagram
     V->>K: processAggregateScores(uid, verifiers, scores)
     K-->>K: rewards/slashing + phase metrics
 
-    S->>R: finalizeWithEAS(assetId, aggregateUid) after deadline
+    S->>R: finalizeWithEASByContributorUid(contributorUid, aggregateUid) after deadline
     R->>E: getAttestation(aggregateUid)
     R-->>R: decode attestation, derive numVerifiers
     alt numVerifiers == 0
@@ -47,8 +51,9 @@ sequenceDiagram
 
 - Submitter lifecycle:
   - `AttestiaStake.registerAsSubmitter()`
-  - `AttestiaRegistry.registerMedia(...)`
-  - `AttestiaRegistry.finalizeWithEAS(assetId, aggregateUid)`
+  - contributor EAS attestation (schema bound to `AttestiaContributorResolver`)
+  - resolver callback creates registry media entry + escrow stake
+  - `AttestiaRegistry.finalizeWithEASByContributorUid(contributorUid, aggregateUid)`
 - Attester lifecycle:
   - `AttestiaStake.stake()` then `AttestiaStake.registerAsAttester()`
   - aggregate publish triggers `AttestiaAggregateResolver.onAttest(...)`
@@ -62,18 +67,18 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Registered: registerMedia
+    [*] --> Registered: contributor onAttest -> registry callback
     Registered --> ReviewWindow: deadline active
     ReviewWindow --> Expired: verificationDeadline reached
-    Expired --> Finalized: finalizeWithEAS
+    Expired --> Finalized: finalizeWithEASByContributorUid
     Finalized --> [*]
 ```
 
 ## Prerequisites
 
 - Node.js 20+
-- An [Alchemy](https://www.alchemy.com/) (or other) HTTPS RPC URL for Base Sepolia
-- **Base Sepolia ETH** on the deployer account ([faucet](https://www.alchemy.com/faucets/base-sepolia))
+- HTTPS RPC URL for Base Sepolia (or Base mainnet)
+- ETH on the deployer account for deployment + schema registration txs
 
 ## Setup
 
@@ -83,10 +88,102 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env`:
+## Deployment order (contracts + schemas + env vars)
 
-- `PRIVATE_KEY` — deployer key (`0x…`, 64 hex chars after prefix)
-- `BASE_SEPOLIA_RPC_URL` — e.g. `https://base-sepolia.g.alchemy.com/v2/<API_KEY>`
+Use this sequence to avoid resolver/schema mismatches.
+
+### 0) Base env (required first)
+
+Set these in `contracts/.env`:
+
+- `PRIVATE_KEY` — deployer key (`0x...`)
+- `BASE_SEPOLIA_RPC_URL` — RPC URL
+- optional: `MIN_STAKE_WEI` (if omitted, deployment script currently defaults to `0.1` ETH)
+
+### 1) Deploy core contracts (`AttestiaStake` + `AttestiaRegistry`)
+
+```bash
+npm run deploy:base-sepolia
+```
+
+Save outputs:
+
+- `ATTESTIA_STAKE=<AttestiaStake address>`
+- `ATTESTIA_REGISTRY=<AttestiaRegistry address>`
+
+Also copy to webapp env later:
+
+- `NEXT_PUBLIC_STAKING_CONTRACT_ADDRESS=<AttestiaStake>`
+- `NEXT_PUBLIC_REGISTRY_CONTRACT_ADDRESS=<AttestiaRegistry>`
+
+### 2) Deploy contributor resolver (must happen before contributor schema registration)
+
+Required env before running:
+
+- `ATTESTIA_REGISTRY=<AttestiaRegistry address>`
+
+Run:
+
+```bash
+npm run deploy:contributor-resolver
+```
+
+Save output:
+
+- `ATTESTIA_CONTRIBUTOR_RESOLVER=<AttestiaContributorResolver address>`
+
+Notes:
+
+- If deployer is registry governance, the script also calls `setContributorResolver`.
+
+### 3) Deploy aggregate resolver (must happen before aggregate schema registration)
+
+Required env before running:
+
+- `ATTESTIA_STAKE=<AttestiaStake address>`
+
+Run:
+
+```bash
+npm run deploy:aggregate-resolver
+```
+
+Save output:
+
+- `ATTESTIA_AGGREGATE_RESOLVER=<AttestiaAggregateResolver address>`
+
+Notes:
+
+- If deployer owns `AttestiaStake`, the script also sets `performanceReporter` automatically.
+
+### 4) Register EAS schemas (after both resolvers are deployed)
+
+Required env for resolver-bound registration:
+
+- `ATTESTIA_CONTRIBUTOR_RESOLVER=<contributor resolver>`
+- `ATTESTIA_AGGREGATE_RESOLVER=<aggregate resolver>`
+
+Register all in one command:
+
+```bash
+npm run eas:register-all
+```
+
+Or individually:
+
+```bash
+npm run eas:register-contributor
+npm run eas:register-offchain
+npm run eas:register-onchain
+```
+
+Copy printed UIDs into `webapp/.env.local`:
+
+- `NEXT_PUBLIC_EAS_SCHEMA_UID_CONTRIBUTOR_MEDIA=...`
+- `NEXT_PUBLIC_EAS_SCHEMA_UID_SCORE_OFFCHAIN=...`
+- `NEXT_PUBLIC_EAS_SCHEMA_UID=...`
+- `EAS_SCHEMA_UID_SCORE_OFFCHAIN=...` (server)
+- `EAS_SCHEMA_UID_AGGREGATE_ONCHAIN=...` (server)
 
 ## Compile & test
 
@@ -95,35 +192,17 @@ npx hardhat compile
 npx hardhat test
 ```
 
-## Deploy (Base Sepolia)
-
-```bash
-npx hardhat run scripts/deploy.ts --network baseSepolia
-```
-
-Or use the npm script:
-
-```bash
-npm run deploy:base-sepolia
-```
-
-Defaults: `MIN_STAKE_WEI` = `0.0001` ether if `MIN_STAKE_WEI` is not set in `.env`.
-
-Copy the printed addresses into the web app:
-
-- `NEXT_PUBLIC_STAKING_CONTRACT_ADDRESS` → `AttestiaStake`
-- `NEXT_PUBLIC_REGISTRY_CONTRACT_ADDRESS` → `AttestiaRegistry` (optional)
-
 ## EAS schemas
 
-There are **two** schemas (both registered by `npm run eas:register-all`):
+There are **three** schemas (all registered by `npm run eas:register-all`):
 
 | Schema | Who uses it | Env var |
 |--------|-------------|---------|
+| **Contributor media (on-chain)** | Contributors attest media metadata | `NEXT_PUBLIC_EAS_SCHEMA_UID_CONTRIBUTOR_MEDIA` |
 | **Attester score (off-chain)** | Attesters sign each score | `NEXT_PUBLIC_EAS_SCHEMA_UID_SCORE_OFFCHAIN` (and server `EAS_SCHEMA_UID_SCORE_OFFCHAIN`) |
 | **Aggregate (on-chain)** | Submitters publish the rollup on-chain | `NEXT_PUBLIC_EAS_SCHEMA_UID` |
 
-Individual scripts: `eas:register-offchain` (score only), `eas:register-onchain` (aggregate only).
+Individual scripts: `eas:register-contributor` (contributor media only), `eas:register-offchain` (score only), `eas:register-onchain` (aggregate only).
 
 ## EAS aggregate resolver and on-chain schema
 
@@ -163,13 +242,13 @@ Register the on-chain aggregate schema (resolver is read from that variable; if 
 npm run eas:register-onchain
 ```
 
-Or register **both** schemas at once (attester off-chain score + on-chain aggregate; only the on-chain row uses `ATTESTIA_AGGREGATE_RESOLVER`):
+Or register **all three** schemas at once (contributor on-chain + score off-chain + aggregate on-chain):
 
 ```bash
 npm run eas:register-all
 ```
 
-Copy the printed UIDs into `webapp/.env.local` (`NEXT_PUBLIC_EAS_SCHEMA_UID_SCORE_OFFCHAIN` and `NEXT_PUBLIC_EAS_SCHEMA_UID`).
+Copy the printed UIDs into `webapp/.env.local` (`NEXT_PUBLIC_EAS_SCHEMA_UID_CONTRIBUTOR_MEDIA`, `NEXT_PUBLIC_EAS_SCHEMA_UID_SCORE_OFFCHAIN`, and `NEXT_PUBLIC_EAS_SCHEMA_UID`).
 
 **Note:** Each registration creates a **new** schema UID. If you change the resolver or re-register, update the web app env to the new UID. Existing attestations keep their original schema UID.
 
@@ -189,18 +268,19 @@ Set `BASESCAN_API_KEY` in `.env` (from [Basescan](https://basescan.org/apis)), t
 
 ```bash
 npx hardhat verify --network baseSepolia <STAKE_ADDRESS> "<MIN_STAKE_WEI>"
-npx hardhat verify --network baseSepolia <REGISTRY_ADDRESS> "<STAKE_ADDRESS>"
+npx hardhat verify --network baseSepolia <REGISTRY_ADDRESS> "<STAKE_ADDRESS>" "0x4200000000000000000000000000000000000021"
 ```
 
-Use quoted constructor arguments as strings (wei for stake; registry takes the stake address).
+Use quoted constructor arguments as strings (wei for stake; registry takes stake + EAS address).
 
 ## Layout
 
-- `src/` — Solidity sources (`AttestiaStake`, `AttestiaRegistry`, `AttestiaAggregateResolver`)
+- `src/` — Solidity sources (`AttestiaStake`, `AttestiaRegistry`, `AttestiaContributorResolver`, `AttestiaAggregateResolver`)
 - `test/` — Hardhat + Mocha + Chai tests
 - `scripts/deploy.ts` — stake + registry deployment
+- `scripts/deployContributorResolver.ts` — contributor resolver deployment + registry wiring
 - `scripts/deployAggregateResolver.ts` — EAS aggregate resolver deployment
 - `scripts/registerEasOnchainSchema.ts` — register on-chain aggregate schema only (optional resolver via env)
 - `scripts/registerEasOffchainSchemas.ts` — register attester off-chain score schema only
-- `scripts/registerEasSchemas.ts` — register both schemas in one run
+- `scripts/registerEasSchemas.ts` — register all three schemas in one run
 

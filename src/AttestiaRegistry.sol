@@ -13,6 +13,7 @@ contract AttestiaRegistry {
     AttestiaStake public immutable stake;
     IEAS public immutable eas;
     address public governance;
+    address public contributorResolver;
 
     struct Media {
         address owner;
@@ -28,9 +29,23 @@ contract AttestiaRegistry {
         bytes32 easAttestationUid;
     }
 
+    struct ContributorMediaAttestation {
+        uint256 assetId;
+        address contributor;
+        bytes32 contentHash;
+        string mediaUri;
+        string mediaContext;
+        uint64 verificationDeadline;
+        uint64 attestedAt;
+        bool exists;
+    }
+
     uint256 public nextAssetId;
     uint256 public accruedNetworkFees;
     mapping(uint256 assetId => Media) private _media;
+    mapping(bytes32 uid => ContributorMediaAttestation) private _contributorMediaAttestations;
+    mapping(address contributor => bytes32[]) private _contributorAttestationUids;
+    mapping(bytes32 uid => uint256 assetId) private _assetIdByContributorAttestation;
     uint256 private _locked;
 
     event MediaRegistered(uint256 indexed assetId, address indexed owner, bytes32 indexed contentHash, string uri);
@@ -42,12 +57,25 @@ contract AttestiaRegistry {
         uint256 networkFeeAmount
     );
     event GovernanceTransferred(address indexed previousGovernance, address indexed newGovernance);
+    event ContributorResolverSet(address indexed previousResolver, address indexed newResolver);
+    event ContributorMediaAttested(
+        bytes32 indexed uid,
+        uint256 indexed assetId,
+        address indexed contributor,
+        bytes32 contentHash,
+        string mediaUri,
+        string mediaContext,
+        uint64 verificationDeadline
+    );
     event VerificationWindowSet(uint64 previousWindow, uint64 newWindow);
     event ContributorStakeSet(uint256 previousStake, uint256 newStake);
 
     error NotMediaOwner();
     error NotGovernance();
+    error NotContributorResolver();
     error UnknownAsset();
+    error UnknownContributorAttestation();
+    error ContributorAttestationAlreadyRecorded();
     error AlreadyFinalized();
     error NotRegisteredSubmitter();
     error InvalidContributorStake();
@@ -58,6 +86,7 @@ contract AttestiaRegistry {
     error ReentrantCall();
     error InvalidAggregateAttestation();
     error InvalidAggregateVectors();
+    error UnknownContributorAttestationUid();
 
     constructor(AttestiaStake _stake, IEAS _eas) {
         stake = _stake;
@@ -78,13 +107,13 @@ contract AttestiaRegistry {
         _;
     }
 
-    modifier onlySubmitter() {
-        if (!stake.isSubmitter(msg.sender)) revert NotRegisteredSubmitter();
+    modifier onlyGovernance() {
+        if (msg.sender != governance) revert NotGovernance();
         _;
     }
 
-    modifier onlyGovernance() {
-        if (msg.sender != governance) revert NotGovernance();
+    modifier onlyContributorResolver() {
+        if (msg.sender != contributorResolver) revert NotContributorResolver();
         _;
     }
 
@@ -101,6 +130,12 @@ contract AttestiaRegistry {
         emit VerificationWindowSet(previous, newVerificationWindow);
     }
 
+    function setContributorResolver(address newResolver) external onlyGovernance {
+        if (newResolver == address(0)) revert ZeroAddress();
+        emit ContributorResolverSet(contributorResolver, newResolver);
+        contributorResolver = newResolver;
+    }
+
     function setContributorMediaStake(uint256 newStake) external onlyGovernance {
         if (newStake == 0) revert InvalidContributorStake();
         uint256 previous = contributorMediaStake;
@@ -108,22 +143,37 @@ contract AttestiaRegistry {
         emit ContributorStakeSet(previous, newStake);
     }
 
-    /// @notice Register a media item with contributor stake escrow.
-    function registerMedia(bytes32 contentHash, string calldata uri)
-        external
-        payable
-        onlySubmitter
-        returns (uint256 assetId)
-    {
+    function getMedia(uint256 assetId) external view returns (Media memory) {
+        if (_media[assetId].owner == address(0)) revert UnknownAsset();
+        return _media[assetId];
+    }
+
+    function isRegisteredContributor(address contributor) external view returns (bool) {
+        return stake.isSubmitter(contributor);
+    }
+
+    function onContributorMediaAttested(
+        bytes32 uid,
+        address contributor,
+        bytes32 contentHash,
+        string calldata mediaUri,
+        string calldata mediaContext,
+        uint64 verificationDeadline
+    ) external payable onlyContributorResolver {
+        if (!stake.isSubmitter(contributor)) revert NotRegisteredSubmitter();
         if (msg.value != contributorMediaStake) revert InvalidContributorStake();
+        if (_assetIdByContributorAttestation[uid] != 0) revert ContributorAttestationAlreadyRecorded();
+
         uint64 nowTs = uint64(block.timestamp);
-        assetId = ++nextAssetId;
+        uint64 effectiveVerificationDeadline = nowTs + verificationWindow;
+        uint256 assetId = ++nextAssetId;
+
         _media[assetId] = Media({
-            owner: msg.sender,
+            owner: contributor,
             contentHash: contentHash,
-            uri: uri,
+            uri: mediaUri,
             createdAt: nowTs,
-            verificationDeadline: nowTs + verificationWindow,
+            verificationDeadline: effectiveVerificationDeadline,
             contributorStake: msg.value,
             refundedAmount: 0,
             networkFeeAmount: 0,
@@ -131,22 +181,77 @@ contract AttestiaRegistry {
             stakeSettled: false,
             easAttestationUid: bytes32(0)
         });
-        emit MediaRegistered(assetId, msg.sender, contentHash, uri);
+        _assetIdByContributorAttestation[uid] = assetId;
+
+        _contributorMediaAttestations[uid] = ContributorMediaAttestation({
+            assetId: assetId,
+            contributor: contributor,
+            contentHash: contentHash,
+            mediaUri: mediaUri,
+            mediaContext: mediaContext,
+            verificationDeadline: verificationDeadline,
+            attestedAt: uint64(block.timestamp),
+            exists: true
+        });
+        _contributorAttestationUids[contributor].push(uid);
+
+        emit MediaRegistered(assetId, contributor, contentHash, mediaUri);
+        emit ContributorMediaAttested(uid, assetId, contributor, contentHash, mediaUri, mediaContext, verificationDeadline);
     }
 
-    function getMedia(uint256 assetId) external view returns (Media memory) {
-        if (_media[assetId].owner == address(0)) revert UnknownAsset();
-        return _media[assetId];
+    function getContributorMediaAttestation(bytes32 uid) external view returns (ContributorMediaAttestation memory) {
+        ContributorMediaAttestation memory a = _contributorMediaAttestations[uid];
+        if (!a.exists) revert UnknownContributorAttestation();
+        return a;
+    }
+
+    function contributorMediaAttestationsLength(address contributor) external view returns (uint256) {
+        return _contributorAttestationUids[contributor].length;
+    }
+
+    function contributorMediaAttestationUidAt(address contributor, uint256 index) external view returns (bytes32) {
+        return _contributorAttestationUids[contributor][index];
+    }
+
+    function assetIdByContributorAttestation(bytes32 uid) external view returns (uint256) {
+        return _assetIdByContributorAttestation[uid];
     }
 
     /// @notice Finalize with aggregate UID and settle contributor stake after deadline.
     function finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid)
         external
         nonReentrant
-        onlyAssetOwner(assetId)
     {
+        _finalizeWithEAS(assetId, easAttestationUid);
+    }
+
+    /// @notice Finalize with contributor attestation UID and settle contributor stake after deadline.
+    function finalizeWithEASByContributorUid(bytes32 contributorAttestationUid, bytes32 easAttestationUid)
+        external
+        nonReentrant
+    {
+        uint256 assetId = _assetIdByContributorAttestation[contributorAttestationUid];
+        if (assetId == 0) revert UnknownContributorAttestationUid();
+        _finalizeWithEAS(assetId, easAttestationUid);
+    }
+
+    /// @notice Finalize with no aggregate UID and return full contributor stake after deadline.
+    /// @dev Intended for rounds where no verifier scores were submitted on-chain.
+    function finalizeWithoutEAS(uint256 assetId) external nonReentrant {
+        _finalizeWithoutEAS(assetId);
+    }
+
+    /// @notice Finalize with contributor attestation UID and no aggregate UID after deadline.
+    function finalizeWithoutEASByContributorUid(bytes32 contributorAttestationUid) external nonReentrant {
+        uint256 assetId = _assetIdByContributorAttestation[contributorAttestationUid];
+        if (assetId == 0) revert UnknownContributorAttestationUid();
+        _finalizeWithoutEAS(assetId);
+    }
+
+    function _finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid) internal onlyAssetOwner(assetId) {
         Media storage m = _media[assetId];
         if (m.easAttestationUid != bytes32(0)) revert AlreadyFinalized();
+        if (m.stakeSettled) revert AlreadyFinalized();
         if (block.timestamp < m.verificationDeadline) revert VerificationDeadlineNotReached();
 
         uint32 numScoresProvided = _numScoresFromAggregateAttestation(m.contentHash, easAttestationUid);
@@ -171,6 +276,24 @@ contract AttestiaRegistry {
         if (!ok) revert TransferFailed();
 
         emit MediaFinalized(assetId, easAttestationUid, numScoresProvided, refund, fee);
+    }
+
+    function _finalizeWithoutEAS(uint256 assetId) internal onlyAssetOwner(assetId) {
+        Media storage m = _media[assetId];
+        if (m.easAttestationUid != bytes32(0)) revert AlreadyFinalized();
+        if (m.stakeSettled) revert AlreadyFinalized();
+        if (block.timestamp < m.verificationDeadline) revert VerificationDeadlineNotReached();
+
+        uint256 refund = m.contributorStake;
+        m.numScoresProvided = 0;
+        m.stakeSettled = true;
+        m.refundedAmount = refund;
+        m.networkFeeAmount = 0;
+
+        (bool ok,) = payable(m.owner).call{value: refund}("");
+        if (!ok) revert TransferFailed();
+
+        emit MediaFinalized(assetId, bytes32(0), 0, refund, 0);
     }
 
     function _numScoresFromAggregateAttestation(bytes32 contentHash, bytes32 uid) internal view returns (uint32) {

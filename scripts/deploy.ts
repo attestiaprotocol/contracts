@@ -1,5 +1,10 @@
 import { ethers, network, run } from "hardhat";
 
+const EAS_BY_CHAIN: Record<number, string> = {
+  84532: "0x4200000000000000000000000000000000000021",
+  8453: "0x4200000000000000000000000000000000000021",
+};
+
 async function verifyContract(address: string, constructorArguments: unknown[]) {
   if (network.name === "hardhat" || network.name === "localhost") {
     console.log(`Skipping verification on ${network.name}`);
@@ -28,8 +33,15 @@ async function main() {
     : ethers.parseEther("0.1");
 
   const [deployer] = await ethers.getSigners();
+  const net = await ethers.provider.getNetwork();
+  const chainId = Number(net.chainId);
+  const eas = EAS_BY_CHAIN[chainId];
+  if (!eas) {
+    throw new Error(`No EAS address configured for chainId ${chainId}`);
+  }
   console.log("Network:", network.name);
   console.log("Deployer:", deployer.address);
+  console.log("EAS:", eas);
 
   const Stake = await ethers.getContractFactory("AttestiaStake");
   const stake = await Stake.deploy(minStakeWei);
@@ -39,10 +51,10 @@ async function main() {
   await verifyContract(stakeAddr, [minStakeWei]);
 
   const Registry = await ethers.getContractFactory("AttestiaRegistry");
-  const registry = await Registry.deploy(stakeAddr);
+  const registry = await Registry.deploy(stakeAddr, eas);
   await registry.waitForDeployment();
   const regAddr = await registry.getAddress();
-  await verifyContract(regAddr, [stakeAddr]);
+  await verifyContract(regAddr, [stakeAddr, eas]);
   await stake.setRegistry(regAddr);
   console.log("AttestiaRegistry", regAddr);
   console.log("Registry linked in AttestiaStake");

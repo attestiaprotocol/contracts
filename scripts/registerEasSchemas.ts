@@ -5,6 +5,8 @@
  * 2. **Attester scores (off-chain)** — each attester signs a score; no resolver.
  * 3. **Aggregate (on-chain)** — submitter publishes the rollup on-chain; optional
  *    `AttestiaAggregateResolver` via `ATTESTIA_AGGREGATE_RESOLVER` in `.env`.
+ * Contributor media schema can be bound to `AttestiaContributorResolver` via
+ * `ATTESTIA_CONTRIBUTOR_RESOLVER` in `.env`.
  *
  * Keep schema strings in sync with `webapp/src/lib/eas/attestiaSchemas.ts`.
  *
@@ -39,11 +41,20 @@ const SCHEMAS = [
   },
 ] as const;
 
-function onchainResolver(): string {
+function aggregateResolverFromEnv(): string {
   const raw = process.env.ATTESTIA_AGGREGATE_RESOLVER?.trim();
   if (!raw) return ethers.ZeroAddress;
   if (!ethers.isAddress(raw)) {
     throw new Error("ATTESTIA_AGGREGATE_RESOLVER must be a valid address");
+  }
+  return ethers.getAddress(raw);
+}
+
+function contributorResolverFromEnv(): string {
+  const raw = process.env.ATTESTIA_CONTRIBUTOR_RESOLVER?.trim();
+  if (!raw) return ethers.ZeroAddress;
+  if (!ethers.isAddress(raw)) {
+    throw new Error("ATTESTIA_CONTRIBUTOR_RESOLVER must be a valid address");
   }
   return ethers.getAddress(raw);
 }
@@ -56,7 +67,13 @@ async function main() {
     "\nRegistering 3 core schemas: (1) contributor media on-chain, (2) attester score off-chain, (3) aggregate on-chain.\n",
   );
 
-  const aggregateResolver = onchainResolver();
+  const aggregateResolver = aggregateResolverFromEnv();
+  const contributorResolver = contributorResolverFromEnv();
+  if (contributorResolver === ethers.ZeroAddress) {
+    console.warn("ATTESTIA_CONTRIBUTOR_RESOLVER unset — contributor schema uses zero resolver.");
+  } else {
+    console.log("Contributor media resolver", contributorResolver);
+  }
   if (aggregateResolver === ethers.ZeroAddress) {
     console.warn("ATTESTIA_AGGREGATE_RESOLVER unset — on-chain schema uses zero resolver.");
   } else {
@@ -66,8 +83,11 @@ async function main() {
   console.log("\n--- webapp/.env.local (and server vars) ---\n");
 
   for (const row of SCHEMAS) {
-    const resolver =
-      "envOnchain" in row ? aggregateResolver : ethers.ZeroAddress;
+    const resolver = "envContributorOnchain" in row
+      ? contributorResolver
+      : "envOnchain" in row
+        ? aggregateResolver
+        : ethers.ZeroAddress;
     const { uid, alreadyRegistered } = await ensureSchemaRegistered(
       deployer,
       row.definition,

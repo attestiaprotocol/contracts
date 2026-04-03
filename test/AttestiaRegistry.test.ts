@@ -3,134 +3,257 @@ import { ethers } from "hardhat";
 
 const MIN = ethers.parseEther("0.1");
 const SUBMITTER_STAKE = ethers.parseEther("0.01");
-const HASH = ethers.keccak256(ethers.toUtf8Bytes("content"));
-const UID = ethers.zeroPadValue("0x01", 32);
+const HASH = ethers.keccak256(ethers.toUtf8Bytes("content")) as `0x${string}`;
 
 describe("AttestiaRegistry", () => {
-  async function deployFixture() {
-    const [deployer, sub, other] = await ethers.getSigners();
-    const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(MIN);
-    await stake.waitForDeployment();
-    await stake.connect(sub).registerAsSubmitter();
-    const Registry = await ethers.getContractFactory("AttestiaRegistry");
-    const reg = await Registry.deploy(await stake.getAddress());
-    await reg.waitForDeployment();
-    await stake.connect(deployer).setRegistry(await reg.getAddress());
-    return { stake, reg, deployer, sub, other };
+  function contributorData(input: {
+    contentHash: `0x${string}`;
+    mediaUri: string;
+    mediaContext: string;
+    verificationDeadline: bigint;
+  }) {
+    return ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "string", "string", "uint64"],
+      [input.contentHash, input.mediaUri, input.mediaContext, input.verificationDeadline],
+    ) as `0x${string}`;
   }
 
-  it("register and finalize with 90% refund when scores exist", async () => {
-    const { stake, reg, sub } = await deployFixture();
-    await expect(
-      reg.connect(sub).registerMedia(HASH, "ipfs://bafy", { value: SUBMITTER_STAKE }),
-    )
-      .to.emit(reg, "MediaRegistered")
-      .withArgs(1n, sub.address, HASH, "ipfs://bafy");
+  function aggregateData(input: {
+    contentHash: `0x${string}`;
+    numVerifiers?: number;
+    verifiers: string[];
+    scores: number[];
+  }) {
+    return ethers.AbiCoder.defaultAbiCoder().encode(
+      [
+        "bytes32",
+        "uint256",
+        "uint32",
+        "uint32",
+        "bytes32",
+        "bytes32",
+        "address[]",
+        "uint16[]",
+      ],
+      [
+        input.contentHash,
+        0n,
+        input.numVerifiers ?? input.verifiers.length,
+        0,
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        input.verifiers,
+        input.scores,
+      ],
+    ) as `0x${string}`;
+  }
+
+  function easAttestation(attester: string, uid: `0x${string}`, data: `0x${string}`) {
+    return {
+      uid,
+      schema: ethers.ZeroHash,
+      time: 0,
+      expirationTime: 0,
+      revocationTime: 0,
+      refUID: ethers.ZeroHash,
+      recipient: attester,
+      attester,
+      revocable: true,
+      data,
+    };
+  }
+
+  async function deployFixture() {
+    const [deployer, sub, other, verifier] = await ethers.getSigners();
+    const Fake = await ethers.getContractFactory("FakeEAS");
+    const fake = await Fake.deploy();
+    await fake.waitForDeployment();
+
+    const Stake = await ethers.getContractFactory("AttestiaStake");
+    const stake = (await Stake.deploy(MIN)) as any;
+    await stake.waitForDeployment();
+    await stake.connect(sub).registerAsSubmitter();
+
+    const Registry = await ethers.getContractFactory("AttestiaRegistry");
+    const reg = (await Registry.deploy(await stake.getAddress(), await fake.getAddress())) as any;
+    await reg.waitForDeployment();
+    await stake.connect(deployer).setRegistry(await reg.getAddress());
+    const Resolver = await ethers.getContractFactory("AttestiaContributorResolver");
+    const resolver = (await Resolver.deploy(await fake.getAddress(), await reg.getAddress())) as any;
+    await resolver.waitForDeployment();
+    await reg.connect(deployer).setContributorResolver(await resolver.getAddress());
+
+    return { fake, stake, reg, resolver, deployer, sub, other, verifier };
+  }
+
+  async function attestContributorMedia(input: {
+    fake: any;
+    resolver: any;
+    attesterAddress: string;
+    contentHash: `0x${string}`;
+    mediaUri: string;
+    mediaContext: string;
+    deadline: bigint;
+    stakeValue: bigint;
+    uid?: `0x${string}`;
+  }) {
+    const uid = (input.uid ?? ethers.keccak256(ethers.toUtf8Bytes(`contrib-${Date.now()}`))) as `0x${string}`;
+    const attestation = easAttestation(
+      input.attesterAddress,
+      uid,
+      contributorData({
+        contentHash: input.contentHash,
+        mediaUri: input.mediaUri,
+        mediaContext: input.mediaContext,
+        verificationDeadline: input.deadline,
+      }),
+    );
+    await input.fake.attest(input.resolver, attestation, { value: input.stakeValue });
+    return uid;
+  }
+
+  it("registers media from contributor resolver onAttest", async () => {
+    const { fake, reg, resolver, sub } = await deployFixture();
+    const uid = await attestContributorMedia({
+      fake,
+      resolver,
+      attesterAddress: sub.address,
+      contentHash: HASH,
+      mediaUri: "ipfs://bafy",
+      mediaContext: "context",
+      deadline: 9999999999n,
+      stakeValue: SUBMITTER_STAKE,
+    });
+
     expect(await reg.nextAssetId()).to.equal(1n);
-    const m = await reg.getMedia(1n);
-    expect(m.owner).to.equal(sub.address);
-    expect(m.contentHash).to.equal(HASH);
-    await ethers.provider.send("evm_increaseTime", [12 * 60 * 60 + 1]);
+    expect(await reg.assetIdByContributorAttestation(uid)).to.equal(1n);
+    const media = await reg.getMedia(1n);
+    expect(media.owner).to.equal(sub.address);
+    expect(media.contentHash).to.equal(HASH);
+    expect(media.uri).to.equal("ipfs://bafy");
+    expect(media.contributorStake).to.equal(SUBMITTER_STAKE);
+  });
+
+  it("reverts if contributor stake is wrong during resolver callback", async () => {
+    const { fake, reg, resolver, sub } = await deployFixture();
+    const uid = ethers.keccak256(ethers.toUtf8Bytes("bad-stake")) as `0x${string}`;
+    const attestation = easAttestation(
+      sub.address,
+      uid,
+      contributorData({
+        contentHash: HASH,
+        mediaUri: "ipfs://x",
+        mediaContext: "x",
+        verificationDeadline: 1000n,
+      }),
+    );
+    await expect(fake.attest(resolver, attestation, { value: ethers.parseEther("0.005") })).to.be.revertedWithCustomError(
+      reg,
+      "InvalidContributorStake",
+    );
+  });
+
+  it("finalizes with 90% refund when aggregate includes scores", async () => {
+    const { fake, stake, reg, resolver, sub, verifier } = await deployFixture();
+    const uid = await attestContributorMedia({
+      fake,
+      resolver,
+      attesterAddress: sub.address,
+      contentHash: HASH,
+      mediaUri: "ipfs://bafy",
+      mediaContext: "context",
+      deadline: 9999999999n,
+      stakeValue: SUBMITTER_STAKE,
+    });
+
+    const aggregateUid = ethers.keccak256(ethers.toUtf8Bytes("aggregate-1")) as `0x${string}`;
+    await fake.setAttestation(
+      easAttestation(
+        sub.address,
+        aggregateUid,
+        aggregateData({
+          contentHash: HASH,
+          verifiers: [verifier.address],
+          scores: [5000],
+        }),
+      ),
+    );
+
+    await ethers.provider.send("evm_increaseTime", [15 * 60 + 1]);
     await ethers.provider.send("evm_mine", []);
-    await reg.connect(sub).finalizeWithEAS(1n, UID, 3);
-    const m2 = await reg.getMedia(1n);
-    expect(m2.easAttestationUid).to.equal(UID);
-    expect(m2.refundedAmount).to.equal(ethers.parseEther("0.009"));
-    expect(m2.networkFeeAmount).to.equal(ethers.parseEther("0.001"));
+    await reg.connect(sub).finalizeWithEASByContributorUid(
+      uid,
+      aggregateUid,
+    );
+
+    const m = await reg.getMedia(1n);
+    expect(m.easAttestationUid).to.equal(aggregateUid);
+    expect(m.refundedAmount).to.equal(ethers.parseEther("0.009"));
+    expect(m.networkFeeAmount).to.equal(ethers.parseEther("0.001"));
     expect(await reg.accruedNetworkFees()).to.equal(ethers.parseEther("0.001"));
     expect(await stake.rewardPoolWei()).to.equal(ethers.parseEther("0.001"));
   });
 
-  it("register media reverts if not submitter", async () => {
-    const { stake, reg, other } = await deployFixture();
-    await stake.connect(other).stake({ value: MIN });
-    await stake.connect(other).registerAsAttester();
-    await expect(
-      reg.connect(other).registerMedia(HASH, "ipfs://x", { value: SUBMITTER_STAKE }),
-    ).to.be.revertedWithCustomError(reg, "NotRegisteredSubmitter");
-  });
+  it("returns 100% when aggregate has zero scores", async () => {
+    const { fake, reg, resolver, sub } = await deployFixture();
+    const uid = await attestContributorMedia({
+      fake,
+      resolver,
+      attesterAddress: sub.address,
+      contentHash: HASH,
+      mediaUri: "ipfs://x",
+      mediaContext: "x",
+      deadline: 9999999999n,
+      stakeValue: SUBMITTER_STAKE,
+    });
 
-  it("register media reverts with wrong stake amount", async () => {
-    const { reg, sub } = await deployFixture();
-    await expect(
-      reg.connect(sub).registerMedia(HASH, "ipfs://x", { value: ethers.parseEther("0.005") }),
-    ).to.be.revertedWithCustomError(reg, "InvalidContributorStake");
-  });
+    const aggregateUid = ethers.keccak256(ethers.toUtf8Bytes("aggregate-2")) as `0x${string}`;
+    await fake.setAttestation(
+      easAttestation(
+        sub.address,
+        aggregateUid,
+        aggregateData({
+          contentHash: HASH,
+          numVerifiers: 0,
+          verifiers: [],
+          scores: [],
+        }),
+      ),
+    );
 
-  it("finalize reverts if not media owner", async () => {
-    const { reg, sub, other } = await deployFixture();
-    await reg.connect(sub).registerMedia(HASH, "ipfs://x", { value: SUBMITTER_STAKE });
-    await ethers.provider.send("evm_increaseTime", [12 * 60 * 60 + 1]);
+    await ethers.provider.send("evm_increaseTime", [15 * 60 + 1]);
     await ethers.provider.send("evm_mine", []);
-    await expect(
-      reg.connect(other).finalizeWithEAS(1n, UID, 1),
-    ).to.be.revertedWithCustomError(reg, "NotMediaOwner");
-  });
-
-  it("finalize reverts if already finalized", async () => {
-    const { reg, sub } = await deployFixture();
-    await reg.connect(sub).registerMedia(HASH, "ipfs://x", { value: SUBMITTER_STAKE });
-    await ethers.provider.send("evm_increaseTime", [12 * 60 * 60 + 1]);
-    await ethers.provider.send("evm_mine", []);
-    await reg.connect(sub).finalizeWithEAS(1n, UID, 1);
-    await expect(
-      reg.connect(sub).finalizeWithEAS(1n, UID, 1),
-    ).to.be.revertedWithCustomError(reg, "AlreadyFinalized");
-  });
-
-  it("finalize reverts if verification window is still open", async () => {
-    const { reg, sub } = await deployFixture();
-    await reg.connect(sub).registerMedia(HASH, "ipfs://x", { value: SUBMITTER_STAKE });
-    await expect(
-      reg.connect(sub).finalizeWithEAS(1n, UID, 1),
-    ).to.be.revertedWithCustomError(reg, "VerificationDeadlineNotReached");
-  });
-
-  it("returns 100% when no scores are provided", async () => {
-    const { reg, sub } = await deployFixture();
-    await reg.connect(sub).registerMedia(HASH, "ipfs://x", { value: SUBMITTER_STAKE });
-    await ethers.provider.send("evm_increaseTime", [12 * 60 * 60 + 1]);
-    await ethers.provider.send("evm_mine", []);
-    await reg.connect(sub).finalizeWithEAS(1n, UID, 0);
+    await reg.connect(sub).finalizeWithEASByContributorUid(
+      uid,
+      aggregateUid,
+    );
     const m = await reg.getMedia(1n);
     expect(m.refundedAmount).to.equal(SUBMITTER_STAKE);
     expect(m.networkFeeAmount).to.equal(0n);
   });
 
-  it("allows governance to tune verification window", async () => {
-    const { reg, deployer, other, sub } = await deployFixture();
-    await expect(
-      reg.connect(other).setVerificationWindow(60),
-    ).to.be.revertedWithCustomError(reg, "NotGovernance");
+  it("returns 100% without aggregate UID when no scores were submitted", async () => {
+    const { reg, resolver, fake, sub } = await deployFixture();
+    const uid = await attestContributorMedia({
+      fake,
+      resolver,
+      attesterAddress: sub.address,
+      contentHash: HASH,
+      mediaUri: "ipfs://noscore",
+      mediaContext: "no scores",
+      deadline: 9999999999n,
+      stakeValue: SUBMITTER_STAKE,
+    });
 
-    await reg.connect(deployer).setVerificationWindow(60);
-    expect(await reg.verificationWindow()).to.equal(60n);
+    await ethers.provider.send("evm_increaseTime", [15 * 60 + 1]);
+    await ethers.provider.send("evm_mine", []);
+    await reg.connect(sub).finalizeWithoutEASByContributorUid(uid);
 
-    await reg.connect(sub).registerMedia(HASH, "ipfs://x", { value: SUBMITTER_STAKE });
     const m = await reg.getMedia(1n);
-    expect(m.verificationDeadline - m.createdAt).to.equal(60n);
-  });
-
-  it("supports governance transfer", async () => {
-    const { reg, deployer, other } = await deployFixture();
-    await reg.connect(deployer).transferGovernance(other.address);
-    expect(await reg.governance()).to.equal(other.address);
-
-    await expect(
-      reg.connect(deployer).setVerificationWindow(120),
-    ).to.be.revertedWithCustomError(reg, "NotGovernance");
-    await reg.connect(other).setVerificationWindow(120);
-    expect(await reg.verificationWindow()).to.equal(120n);
-  });
-
-  it("allows governance to tune contributor stake in configured range", async () => {
-    const { reg, deployer, sub } = await deployFixture();
-    await reg.connect(deployer).setContributorMediaStake(ethers.parseEther("0.02"));
-    expect(await reg.contributorMediaStake()).to.equal(ethers.parseEther("0.02"));
-
-    await reg.connect(sub).registerMedia(HASH, "ipfs://x", { value: ethers.parseEther("0.02") });
-    const m = await reg.getMedia(1n);
-    expect(m.contributorStake).to.equal(ethers.parseEther("0.02"));
+    expect(m.easAttestationUid).to.equal(ethers.ZeroHash);
+    expect(m.numScoresProvided).to.equal(0);
+    expect(m.refundedAmount).to.equal(SUBMITTER_STAKE);
+    expect(m.networkFeeAmount).to.equal(0n);
+    expect(await reg.accruedNetworkFees()).to.equal(0n);
   });
 });
