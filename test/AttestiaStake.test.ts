@@ -25,16 +25,6 @@ describe("AttestiaStake", () => {
     ).to.be.revertedWithCustomError(stake, "BelowMinStake");
   });
 
-  it("register submitter after stake", async () => {
-    const { stake, alice } = await deployStake();
-    await stake.connect(alice).stake({ value: MIN });
-    await stake.connect(alice).registerAsSubmitter();
-    expect(await stake.isSubmitter(alice.address)).to.equal(true);
-    expect(await stake.submittersLength()).to.equal(1n);
-    expect(await stake.submitterAt(0)).to.equal(alice.address);
-    expect(await stake.roleOf(alice.address)).to.equal(1n);
-  });
-
   it("register attester after stake", async () => {
     const { stake, bob } = await deployStake();
     await stake.connect(bob).stake({ value: MIN });
@@ -42,12 +32,6 @@ describe("AttestiaStake", () => {
     expect(await stake.isAttester(bob.address)).to.equal(true);
     expect(await stake.attestersLength()).to.equal(1n);
     expect(await stake.attesterAt(0)).to.equal(bob.address);
-  });
-
-  it("submitter register works without stake", async () => {
-    const { stake, alice } = await deployStake();
-    await stake.connect(alice).registerAsSubmitter();
-    expect(await stake.isSubmitter(alice.address)).to.equal(true);
   });
 
   it("attester register still reverts without stake", async () => {
@@ -60,10 +44,11 @@ describe("AttestiaStake", () => {
   it("register reverts double role", async () => {
     const { stake, alice } = await deployStake();
     await stake.connect(alice).stake({ value: MIN });
-    await stake.connect(alice).registerAsSubmitter();
-    await expect(
-      stake.connect(alice).registerAsAttester(),
-    ).to.be.revertedWithCustomError(stake, "AlreadyRegistered");
+    await stake.connect(alice).registerAsAttester();
+    await expect(stake.connect(alice).registerAsAttester()).to.be.revertedWithCustomError(
+      stake,
+      "AlreadyRegistered",
+    );
   });
 
   it("withdraw", async () => {

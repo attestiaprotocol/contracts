@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {AttestiaStake} from "./AttestiaStake.sol";
 
 /// @title AttestiaRegistry — on-chain media handles for the Attestia Protocol (Base)
-/// @dev Registered submitters lock a fixed per-media stake on submission.
+/// @dev Submitters are not registered on-chain; any contributor can submit with stake.
 contract AttestiaRegistry {
     uint16 public constant CONTRIBUTOR_REFUND_BPS = 9_000; // 90%
     uint256 public contributorMediaStake = 0.01 ether;
@@ -77,7 +77,6 @@ contract AttestiaRegistry {
     error UnknownContributorAttestation();
     error ContributorAttestationAlreadyRecorded();
     error AlreadyFinalized();
-    error NotRegisteredSubmitter();
     error InvalidContributorStake();
     error ZeroAddress();
     error InvalidVerificationWindow();
@@ -148,10 +147,6 @@ contract AttestiaRegistry {
         return _media[assetId];
     }
 
-    function isRegisteredContributor(address contributor) external view returns (bool) {
-        return stake.isSubmitter(contributor);
-    }
-
     function onContributorMediaAttested(
         bytes32 uid,
         address contributor,
@@ -160,7 +155,6 @@ contract AttestiaRegistry {
         string calldata mediaContext,
         uint64 verificationDeadline
     ) external payable onlyContributorResolver {
-        if (!stake.isSubmitter(contributor)) revert NotRegisteredSubmitter();
         if (msg.value != contributorMediaStake) revert InvalidContributorStake();
         if (_assetIdByContributorAttestation[uid] != 0) revert ContributorAttestationAlreadyRecorded();
 

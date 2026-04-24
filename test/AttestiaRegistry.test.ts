@@ -72,7 +72,6 @@ describe("AttestiaRegistry", () => {
     const Stake = await ethers.getContractFactory("AttestiaStake");
     const stake = (await Stake.deploy(MIN)) as any;
     await stake.waitForDeployment();
-    await stake.connect(sub).registerAsSubmitter();
 
     const Registry = await ethers.getContractFactory("AttestiaRegistry");
     const reg = (await Registry.deploy(await stake.getAddress(), await fake.getAddress())) as any;

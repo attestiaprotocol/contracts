@@ -6,8 +6,6 @@ import {IEAS} from "@ethereum-attestation-service/eas-contracts/contracts/IEAS.s
 import {Attestation} from "@ethereum-attestation-service/eas-contracts/contracts/Common.sol";
 
 interface IAttestiaRegistryContributor {
-    function isRegisteredContributor(address contributor) external view returns (bool);
-
     function onContributorMediaAttested(
         bytes32 uid,
         address contributor,
@@ -20,12 +18,11 @@ interface IAttestiaRegistryContributor {
 
 /// @title AttestiaContributorResolver
 /// @notice EAS schema resolver for contributor media attestations.
-/// @dev Validates contributor membership and forwards media metadata to `AttestiaRegistry`.
+/// @dev Submitters are not registered on-chain; forwards media metadata to `AttestiaRegistry`.
 contract AttestiaContributorResolver is SchemaResolver {
     IAttestiaRegistryContributor public immutable registry;
 
     error ZeroAddress();
-    error UnregisteredContributor();
 
     event ContributorAttestationAccepted(bytes32 indexed uid, address indexed contributor, bytes32 indexed contentHash);
 
@@ -43,10 +40,6 @@ contract AttestiaContributorResolver is SchemaResolver {
         override
         returns (bool)
     {
-        if (!registry.isRegisteredContributor(attestation.attester)) {
-            revert UnregisteredContributor();
-        }
-
         (bytes32 contentHash, string memory mediaUri, string memory mediaContext, uint64 verificationDeadline) =
             abi.decode(attestation.data, (bytes32, string, string, uint64));
 
@@ -64,9 +57,7 @@ contract AttestiaContributorResolver is SchemaResolver {
         override
         returns (bool)
     {
-        if (!registry.isRegisteredContributor(attestation.attester)) {
-            revert UnregisteredContributor();
-        }
+        attestation;
         return true;
     }
 }

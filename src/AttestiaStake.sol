@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @title AttestiaStake — stake, participant signup (submitters / attesters), slashing, rewards (Base)
-/// @dev Submitters can register without stake. Attesters must satisfy `minStake`.
+/// @title AttestiaStake — stake, attester signup, slashing, rewards (Base)
+/// @dev Only attesters are registered on-chain. Submitters are handled off-chain.
 contract AttestiaStake {
     enum ParticipantRole {
         None,
-        Submitter,
         Attester
     }
 
@@ -90,7 +89,6 @@ contract AttestiaStake {
     mapping(address => VerifierPerformance) public verifierPerformance;
     mapping(address => uint64) public suspendedUntilRound;
 
-    address[] private _submitters;
     address[] private _attesters;
 
     uint256 private _locked;
@@ -101,8 +99,8 @@ contract AttestiaStake {
     event Rewarded(address indexed account, uint256 amount);
     event RewardsFunded(uint256 amount);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event RegisteredSubmitter(address indexed account);
     event RegisteredAttester(address indexed account);
+    event RegistrarRegisteredAttester(address indexed registrar, address indexed account);
     event PerformanceReporterSet(address indexed reporter);
     event RegistrySet(address indexed registry);
     event ContributorFeesDeposited(address indexed registry, uint256 amount);
@@ -282,14 +280,6 @@ contract AttestiaStake {
         emit Staked(msg.sender, msg.value);
     }
 
-    /// @notice Contributor registration is stake-free; per-media stake is handled by `AttestiaRegistry`.
-    function registerAsSubmitter() external {
-        if (roleOf[msg.sender] != ParticipantRole.None) revert AlreadyRegistered();
-        roleOf[msg.sender] = ParticipantRole.Submitter;
-        _submitters.push(msg.sender);
-        emit RegisteredSubmitter(msg.sender);
-    }
-
     /// @notice Requires `staked[msg.sender] >= minStake` (e.g. after `stake()` is confirmed).
     function registerAsAttester() external {
         if (roleOf[msg.sender] != ParticipantRole.None) revert AlreadyRegistered();
@@ -299,24 +289,23 @@ contract AttestiaStake {
         emit RegisteredAttester(msg.sender);
     }
 
-    function isSubmitter(address account) external view returns (bool) {
-        return roleOf[account] == ParticipantRole.Submitter;
+    /// @notice Admin-sponsored attester registration; requires `staked[account] >= minStake`.
+    function registerAsAttesterFor(address account) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        if (roleOf[account] != ParticipantRole.None) revert AlreadyRegistered();
+        if (staked[account] < minStake) revert BelowMinStake();
+        roleOf[account] = ParticipantRole.Attester;
+        _attesters.push(account);
+        emit RegisteredAttester(account);
+        emit RegistrarRegisteredAttester(msg.sender, account);
     }
 
     function isAttester(address account) external view returns (bool) {
         return roleOf[account] == ParticipantRole.Attester;
     }
 
-    function submittersLength() external view returns (uint256) {
-        return _submitters.length;
-    }
-
     function attestersLength() external view returns (uint256) {
         return _attesters.length;
-    }
-
-    function submitterAt(uint256 index) external view returns (address) {
-        return _submitters[index];
     }
 
     function attesterAt(uint256 index) external view returns (address) {

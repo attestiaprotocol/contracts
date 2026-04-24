@@ -49,8 +49,7 @@ sequenceDiagram
 
 ### Function interaction map
 
-- Submitter lifecycle:
-  - `AttestiaStake.registerAsSubmitter()`
+- Submitter lifecycle (no on-chain registration):
   - contributor EAS attestation (schema bound to `AttestiaContributorResolver`)
   - resolver callback creates registry media entry + escrow stake
   - `AttestiaRegistry.finalizeWithEASByContributorUid(contributorUid, aggregateUid)`

@@ -39,7 +39,6 @@ describe("AttestiaContributorResolver", () => {
     const Stake = await ethers.getContractFactory("AttestiaStake");
     const stake = await Stake.deploy(ethers.parseEther("0.1"));
     await stake.waitForDeployment();
-    await stake.connect(contributor).registerAsSubmitter();
 
     const Registry = await ethers.getContractFactory("AttestiaRegistry");
     const registry = await Registry.deploy(await stake.getAddress(), await fake.getAddress());
@@ -79,8 +78,8 @@ describe("AttestiaContributorResolver", () => {
     expect(await registry.assetIdByContributorAttestation(uid)).to.equal(1n);
   });
 
-  it("reverts for unregistered contributor", async () => {
-    const [, contributor] = await ethers.getSigners();
+  it("accepts contributor without on-chain registration", async () => {
+    const [deployer, contributor] = await ethers.getSigners();
 
     const Fake = await ethers.getContractFactory("FakeEAS");
     const fake = await Fake.deploy();
@@ -93,10 +92,12 @@ describe("AttestiaContributorResolver", () => {
     const Registry = await ethers.getContractFactory("AttestiaRegistry");
     const registry = await Registry.deploy(await stake.getAddress(), await fake.getAddress());
     await registry.waitForDeployment();
+    await stake.connect(deployer).setRegistry(await registry.getAddress());
 
     const Resolver = await ethers.getContractFactory("AttestiaContributorResolver");
     const resolver = await Resolver.deploy(await fake.getAddress(), await registry.getAddress());
     await resolver.waitForDeployment();
+    await registry.connect(deployer).setContributorResolver(await resolver.getAddress());
 
     const uid = ethers.keccak256(ethers.toUtf8Bytes("contrib-attestation-2"));
     const a = emptyAttestation(
@@ -111,9 +112,6 @@ describe("AttestiaContributorResolver", () => {
     );
 
     const requiredStake = await registry.contributorMediaStake();
-    await expect(fake.attest(await resolver.getAddress(), a, { value: requiredStake })).to.be.revertedWithCustomError(
-      resolver,
-      "UnregisteredContributor",
-    );
+    await expect(fake.attest(await resolver.getAddress(), a, { value: requiredStake })).not.to.be.reverted;
   });
 });
