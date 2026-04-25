@@ -5,11 +5,10 @@ import {AttestiaStake} from "./AttestiaStake.sol";
 
 /// @title AttestiaRegistry — on-chain media handles for the Attestia Protocol (Base)
 /// @dev Submitters are not registered on-chain; any contributor can submit with stake.
-/// @dev There is no verification window — finalization can happen at any time after
-///      the aggregate attestation is published.
 contract AttestiaRegistry {
     uint16 public constant CONTRIBUTOR_REFUND_BPS = 9_000; // 90%
     uint256 public contributorMediaStake = 0.01 ether;
+    uint64 public verificationWindow = 15 minutes;
 
     AttestiaStake public immutable stake;
     IEAS public immutable eas;
@@ -21,7 +20,7 @@ contract AttestiaRegistry {
         bytes32 contentHash;
         string uri;
         uint64 createdAt;
-        uint64 verificationDeadline; // always 0 — kept for ABI compatibility
+        uint64 verificationDeadline;
         uint256 contributorStake;
         uint256 refundedAmount;
         uint256 networkFeeAmount;
@@ -36,7 +35,7 @@ contract AttestiaRegistry {
         bytes32 contentHash;
         string mediaUri;
         string mediaContext;
-        uint64 verificationDeadline; // always 0 — kept for ABI compatibility
+        uint64 verificationDeadline;
         uint64 attestedAt;
         bool exists;
     }
@@ -68,6 +67,7 @@ contract AttestiaRegistry {
         string mediaContext,
         uint64 verificationDeadline
     );
+    event VerificationWindowSet(uint64 previousWindow, uint64 newWindow);
     event ContributorStakeSet(uint256 previousStake, uint256 newStake);
 
     error NotMediaOwner();
@@ -79,6 +79,8 @@ contract AttestiaRegistry {
     error AlreadyFinalized();
     error InvalidContributorStake();
     error ZeroAddress();
+    error InvalidVerificationWindow();
+    error VerificationDeadlineNotReached();
     error TransferFailed();
     error ReentrantCall();
     error InvalidAggregateAttestation();
@@ -120,6 +122,13 @@ contract AttestiaRegistry {
         governance = newGovernance;
     }
 
+    function setVerificationWindow(uint64 newVerificationWindow) external onlyGovernance {
+        if (newVerificationWindow == 0) revert InvalidVerificationWindow();
+        uint64 previous = verificationWindow;
+        verificationWindow = newVerificationWindow;
+        emit VerificationWindowSet(previous, newVerificationWindow);
+    }
+
     function setContributorResolver(address newResolver) external onlyGovernance {
         if (newResolver == address(0)) revert ZeroAddress();
         emit ContributorResolverSet(contributorResolver, newResolver);
@@ -150,6 +159,7 @@ contract AttestiaRegistry {
         if (_assetIdByContributorAttestation[uid] != 0) revert ContributorAttestationAlreadyRecorded();
 
         uint64 nowTs = uint64(block.timestamp);
+        uint64 effectiveVerificationDeadline = nowTs + verificationWindow;
         uint256 assetId = ++nextAssetId;
 
         _media[assetId] = Media({
@@ -157,7 +167,7 @@ contract AttestiaRegistry {
             contentHash: contentHash,
             uri: mediaUri,
             createdAt: nowTs,
-            verificationDeadline: 0,
+            verificationDeadline: effectiveVerificationDeadline,
             contributorStake: msg.value,
             refundedAmount: 0,
             networkFeeAmount: 0,
@@ -173,8 +183,8 @@ contract AttestiaRegistry {
             contentHash: contentHash,
             mediaUri: mediaUri,
             mediaContext: mediaContext,
-            verificationDeadline: 0,
-            attestedAt: nowTs,
+            verificationDeadline: verificationDeadline,
+            attestedAt: uint64(block.timestamp),
             exists: true
         });
         _contributorAttestationUids[contributor].push(uid);
@@ -201,7 +211,7 @@ contract AttestiaRegistry {
         return _assetIdByContributorAttestation[uid];
     }
 
-    /// @notice Finalize with aggregate UID and settle contributor stake.
+    /// @notice Finalize with aggregate UID and settle contributor stake after deadline.
     function finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid)
         external
         nonReentrant
@@ -209,7 +219,7 @@ contract AttestiaRegistry {
         _finalizeWithEAS(assetId, easAttestationUid);
     }
 
-    /// @notice Finalize with contributor attestation UID and settle contributor stake.
+    /// @notice Finalize with contributor attestation UID and settle contributor stake after deadline.
     function finalizeWithEASByContributorUid(bytes32 contributorAttestationUid, bytes32 easAttestationUid)
         external
         nonReentrant
@@ -219,13 +229,13 @@ contract AttestiaRegistry {
         _finalizeWithEAS(assetId, easAttestationUid);
     }
 
-    /// @notice Finalize with no aggregate UID and return full contributor stake.
-    /// @dev Used when no verifier scores were submitted on-chain.
+    /// @notice Finalize with no aggregate UID and return full contributor stake after deadline.
+    /// @dev Intended for rounds where no verifier scores were submitted on-chain.
     function finalizeWithoutEAS(uint256 assetId) external nonReentrant {
         _finalizeWithoutEAS(assetId);
     }
 
-    /// @notice Finalize with contributor attestation UID and no aggregate UID.
+    /// @notice Finalize with contributor attestation UID and no aggregate UID after deadline.
     function finalizeWithoutEASByContributorUid(bytes32 contributorAttestationUid) external nonReentrant {
         uint256 assetId = _assetIdByContributorAttestation[contributorAttestationUid];
         if (assetId == 0) revert UnknownContributorAttestationUid();
@@ -236,6 +246,7 @@ contract AttestiaRegistry {
         Media storage m = _media[assetId];
         if (m.easAttestationUid != bytes32(0)) revert AlreadyFinalized();
         if (m.stakeSettled) revert AlreadyFinalized();
+        if (block.timestamp < m.verificationDeadline) revert VerificationDeadlineNotReached();
 
         uint32 numScoresProvided = _numScoresFromAggregateAttestation(m.contentHash, easAttestationUid);
 
@@ -265,6 +276,7 @@ contract AttestiaRegistry {
         Media storage m = _media[assetId];
         if (m.easAttestationUid != bytes32(0)) revert AlreadyFinalized();
         if (m.stakeSettled) revert AlreadyFinalized();
+        if (block.timestamp < m.verificationDeadline) revert VerificationDeadlineNotReached();
 
         uint256 refund = m.contributorStake;
         m.numScoresProvided = 0;
