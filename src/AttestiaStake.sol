@@ -91,6 +91,15 @@ contract AttestiaStake {
 
     address[] private _attesters;
 
+    /// @notice Packed row for dashboards: on-chain reputation multiplier and round stats.
+    struct AttesterReputationSnapshot {
+        address account;
+        uint16 reputationBps;
+        uint64 evaluations;
+        uint64 slashCount;
+        uint256 stakedWei;
+    }
+
     uint256 private _locked;
 
     event Staked(address indexed account, uint256 amount);
@@ -310,6 +319,34 @@ contract AttestiaStake {
 
     function attesterAt(uint256 index) external view returns (address) {
         return _attesters[index];
+    }
+
+    /// @notice Returns a slice of registered attesters with reputation and stake (sort client-side for leaderboards).
+    function getAttesterReputationSnapshots(uint256 offset, uint256 limit)
+        external
+        view
+        returns (AttesterReputationSnapshot[] memory snapshots)
+    {
+        uint256 n = _attesters.length;
+        if (offset >= n || limit == 0) {
+            return new AttesterReputationSnapshot[](0);
+        }
+        uint256 end = offset + limit;
+        if (end > n) end = n;
+        uint256 len = end - offset;
+        snapshots = new AttesterReputationSnapshot[](len);
+        for (uint256 i = 0; i < len; i++) {
+            address account = _attesters[offset + i];
+            VerifierPerformance storage p = verifierPerformance[account];
+            uint16 rep = p.reputationBps == 0 ? uint16(BPS) : p.reputationBps;
+            snapshots[i] = AttesterReputationSnapshot({
+                account: account,
+                reputationBps: rep,
+                evaluations: p.evaluations,
+                slashCount: p.slashCount,
+                stakedWei: staked[account]
+            });
+        }
     }
 
     function withdraw(uint256 amount) external nonReentrant {

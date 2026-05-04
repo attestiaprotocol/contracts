@@ -34,6 +34,18 @@ describe("AttestiaStake", () => {
     expect(await stake.attesterAt(0)).to.equal(bob.address);
   });
 
+  it("getAttesterReputationSnapshots returns registered attesters", async () => {
+    const { stake, bob } = await deployStake();
+    await stake.connect(bob).stake({ value: MIN });
+    await stake.connect(bob).registerAsAttester();
+    const rows = await stake.getAttesterReputationSnapshots(0, 10);
+    expect(rows.length).to.equal(1);
+    expect(rows[0].account).to.equal(bob.address);
+    expect(rows[0].reputationBps).to.equal(10000);
+    expect(rows[0].evaluations).to.equal(0n);
+    expect(rows[0].stakedWei).to.equal(MIN);
+  });
+
   it("attester register still reverts without stake", async () => {
     const { stake, alice } = await deployStake();
     await expect(
