@@ -31,9 +31,9 @@ sequenceDiagram
     Note over S,A: Off-chain review window
     A-->>E: off-chain score attestations/signatures
 
-    S->>E: publish aggregate attestation (verifiers[], scores[])
+    S->>E: publish aggregate attestation (verifiers[], scores[], numVerifiers = N independents)
     E->>V: resolver onAttest(attestation)
-    V->>K: processAggregateScores(uid, verifiers, scores)
+    V->>K: processAggregateScores(uid, N, verifiers, scores)
     K-->>K: rewards/slashing + phase metrics
 
     S->>R: finalizeWithEASByContributorUid(contributorUid, aggregateUid) after deadline
@@ -58,9 +58,13 @@ sequenceDiagram
   - aggregate publish triggers `AttestiaAggregateResolver.onAttest(...)`
   - resolver calls `AttestiaStake.processAggregateScores(...)`
 - Settlement rule:
-  - `AttestiaRegistry` reads aggregate data from EAS and computes `numScoresProvided` on-chain.
+  - `AttestiaRegistry` reads aggregate data from EAS and counts **independent** attesters (excludes `AttestiaStake.nativeAttester`).
   - `numScoresProvided == 0` => full contributor refund.
   - `numScoresProvided > 0` => partial contributor refund + network fee routed to `AttestiaStake`.
+- Native attester:
+  - Configure `AttestiaStake.nativeAttester` to the wallet that signs Attestia detector off-chain scores.
+  - Aggregate `verifiers[]` may include that address once; `numVerifiers` is the count of independent attesters only.
+  - Native score weight `w_A(N)` by independent count N: `<5` 80%, `5–9` 50%, `10–14` 30%, `15–20` 20%, `>20` 10% (governance-tunable via `setNativeWeightBps`); native is not rewarded or slashed.
 
 ### Media state machine
 
@@ -98,6 +102,7 @@ Set these in `contracts/.env`:
 - `PRIVATE_KEY` — deployer key (`0x...`)
 - `BASE_SEPOLIA_RPC_URL` — RPC URL
 - optional: `MIN_STAKE_WEI` (if omitted, deployment script currently defaults to `0.1` ETH)
+- optional: `ATTESTIA_NATIVE_ATTESTER` — detector signer wallet (wired to `AttestiaStake.nativeAttester` at deploy)
 
 ### 1) Deploy core contracts (`AttestiaStake` + `AttestiaRegistry`)
 

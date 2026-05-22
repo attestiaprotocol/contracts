@@ -58,6 +58,16 @@ async function main() {
   await stake.setRegistry(regAddr);
   console.log("AttestiaRegistry", regAddr);
   console.log("Registry linked in AttestiaStake");
+
+  const nativeRaw = process.env.ATTESTIA_NATIVE_ATTESTER?.trim();
+  if (nativeRaw && ethers.isAddress(nativeRaw)) {
+    const native = ethers.getAddress(nativeRaw);
+    await stake.setNativeAttester(native);
+    console.log("nativeAttester", native);
+  } else if (nativeRaw) {
+    console.warn("ATTESTIA_NATIVE_ATTESTER is set but not a valid address — skipped");
+  }
+
   console.log("minStakeWei", minStakeWei.toString());
 }
 

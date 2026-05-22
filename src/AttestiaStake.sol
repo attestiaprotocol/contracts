@@ -43,6 +43,15 @@ contract AttestiaStake {
     uint16 public reputationMinBps = 5_000; // 0.5x
     uint16 public reputationMaxBps = 15_000; // 1.5x
 
+    /// @notice Wallet that signs the Attestia native (detector) off-chain attestation; excluded from stake rewards/slashing.
+    address public nativeAttester;
+    /// @notice Native score weight w_A(N) by independent attester count N: N<5, 5≤N<10, 10≤N<15, 15≤N≤20, N>20.
+    uint16 public nativeWeightLt5Bps = 8_000;
+    uint16 public nativeWeightLt10Bps = 5_000;
+    uint16 public nativeWeightLt15Bps = 3_000;
+    uint16 public nativeWeightLe20Bps = 2_000;
+    uint16 public nativeWeightGt20Bps = 1_000;
+
     struct VerifierPerformance {
         uint64 evaluations;
         uint64 slashCount;
@@ -57,9 +66,12 @@ contract AttestiaStake {
         uint64 roundId;
         NetworkPhase phase;
         uint256 variance;
-        uint256 avg;
-        uint256 sumScores;
-        uint256 verifierCount;
+        uint256 consensusScoreBps;
+        uint256 independentSum;
+        uint256 independentCount;
+        uint16 nativeWeightBps;
+        bool hasNative;
+        uint16 nativeScore;
     }
 
     struct EconomicConfig {
@@ -78,6 +90,12 @@ contract AttestiaStake {
         uint16 reputationLambdaBps;
         uint16 reputationMinBps;
         uint16 reputationMaxBps;
+        address nativeAttester;
+        uint16 nativeWeightLt5Bps;
+        uint16 nativeWeightLt10Bps;
+        uint16 nativeWeightLt15Bps;
+        uint16 nativeWeightLe20Bps;
+        uint16 nativeWeightGt20Bps;
     }
 
     enum NetworkPhase {
@@ -119,13 +137,22 @@ contract AttestiaStake {
     event DeviationThresholdsSet(uint16 phase1DeviationThresholdBps, uint16 phase2DeviationThresholdBps);
     event SlashingParamsSet(uint256 phase1VarianceThresholdBps2, uint16 phase1SlashBps, uint16 phase2SlashBps);
     event ReputationParamsSet(uint16 alphaBps, uint16 reputationLambdaBps, uint16 reputationMinBps, uint16 reputationMaxBps);
+    event NativeAttesterSet(address indexed nativeAttester);
+    event NativeWeightBpsSet(
+        uint16 nativeWeightLt5Bps,
+        uint16 nativeWeightLt10Bps,
+        uint16 nativeWeightLt15Bps,
+        uint16 nativeWeightLe20Bps,
+        uint16 nativeWeightGt20Bps
+    );
     event RoundScored(
         bytes32 indexed aggregateUid,
         uint64 indexed roundId,
         NetworkPhase phase,
-        uint256 averageScoreBps,
+        uint256 consensusScoreBps,
         uint256 varianceBpsSquared,
-        uint256 verifierCount
+        uint256 independentVerifierCount,
+        uint16 nativeWeightBps
     );
     event VerifierRoundOutcome(
         bytes32 indexed aggregateUid,
@@ -150,6 +177,9 @@ contract AttestiaStake {
     error InvalidScore();
     error InvalidVerifier();
     error DuplicateVerifier();
+    error InvalidNativeAttester();
+    error DuplicateNativeAttester();
+    error IndependentCountMismatch();
     error InvalidParam();
     error InsufficientRewardPool();
 
@@ -258,6 +288,30 @@ contract AttestiaStake {
         emit ReputationParamsSet(alpha, lambda, repMin, repMax);
     }
 
+    function setNativeAttester(address attester) external onlyOwner {
+        nativeAttester = attester;
+        emit NativeAttesterSet(attester);
+    }
+
+    function setNativeWeightBps(uint16 lt5, uint16 lt10, uint16 lt15, uint16 le20, uint16 gt20) external onlyOwner {
+        if (lt5 > BPS || lt10 > BPS || lt15 > BPS || le20 > BPS || gt20 > BPS) revert InvalidParam();
+        nativeWeightLt5Bps = lt5;
+        nativeWeightLt10Bps = lt10;
+        nativeWeightLt15Bps = lt15;
+        nativeWeightLe20Bps = le20;
+        nativeWeightGt20Bps = gt20;
+        emit NativeWeightBpsSet(lt5, lt10, lt15, le20, gt20);
+    }
+
+    /// @notice w_A(N) for N independent attesters in the aggregate (whitepaper §3.4).
+    function nativeWeightBpsForIndependentCount(uint256 independentCount) public view returns (uint16) {
+        if (independentCount < 5) return nativeWeightLt5Bps;
+        if (independentCount < 10) return nativeWeightLt10Bps;
+        if (independentCount < 15) return nativeWeightLt15Bps;
+        if (independentCount <= 20) return nativeWeightLe20Bps;
+        return nativeWeightGt20Bps;
+    }
+
     function networkPhase() public view returns (NetworkPhase) {
         return _phaseFromActiveVerifiers(_activeAttesterCount(currentRoundId + 1));
     }
@@ -278,7 +332,13 @@ contract AttestiaStake {
             alphaBps: alphaBps,
             reputationLambdaBps: reputationLambdaBps,
             reputationMinBps: reputationMinBps,
-            reputationMaxBps: reputationMaxBps
+            reputationMaxBps: reputationMaxBps,
+            nativeAttester: nativeAttester,
+            nativeWeightLt5Bps: nativeWeightLt5Bps,
+            nativeWeightLt10Bps: nativeWeightLt10Bps,
+            nativeWeightLt15Bps: nativeWeightLt15Bps,
+            nativeWeightLe20Bps: nativeWeightLe20Bps,
+            nativeWeightGt20Bps: nativeWeightGt20Bps
         });
     }
 
@@ -395,32 +455,44 @@ contract AttestiaStake {
         emit Rewarded(msg.sender, r);
     }
 
-    /// @notice Called by the aggregate resolver to score verifier round performance.
-    /// @dev Scores are expected in [0, 10_000] where 10_000 maps to 1.0.
-    function processAggregateScores(bytes32 aggregateUid, address[] calldata verifiers, uint16[] calldata scores)
-        external
-        onlyPerformanceReporter
-    {
+    /// @notice Called by the aggregate resolver to score independent attester round performance.
+    /// @dev `numIndependentVerifiers` is N (excludes the native attester). `verifiers`/`scores` may include the
+    ///      native wallet once; it is identified via `nativeAttester` and is not rewarded or slashed.
+    ///      Scores are in [0, 10_000] where 10_000 maps to 1.0.
+    function processAggregateScores(
+        bytes32 aggregateUid,
+        uint32 numIndependentVerifiers,
+        address[] calldata verifiers,
+        uint16[] calldata scores
+    ) external onlyPerformanceReporter {
         uint64 roundId = ++currentRoundId;
-        uint256 n = verifiers.length;
-        uint256 sum = _validateAndSumScores(verifiers, scores);
-        uint256 avg = sum / n;
-        uint256 variance = _computeVariance(scores, avg);
+        (uint16 nativeScore, bool hasNative, uint256 independentSum, uint256 independentCount) =
+            _validateRoundScores(numIndependentVerifiers, verifiers, scores);
+
+        uint16 nativeWeight = nativeWeightBpsForIndependentCount(independentCount);
+        uint256 consensus = _consensusScore(nativeScore, hasNative, nativeWeight, independentSum, independentCount);
+        uint256 variance = _computeIndependentVariance(verifiers, scores, consensus);
         NetworkPhase phase = _phaseFromActiveVerifiers(_activeAttesterCount(roundId));
         RoundContext memory ctx = RoundContext({
             aggregateUid: aggregateUid,
             roundId: roundId,
             phase: phase,
             variance: variance,
-            avg: avg,
-            sumScores: sum,
-            verifierCount: n
+            consensusScoreBps: consensus,
+            independentSum: independentSum,
+            independentCount: independentCount,
+            nativeWeightBps: nativeWeight,
+            hasNative: hasNative,
+            nativeScore: nativeScore
         });
 
-        emit RoundScored(aggregateUid, roundId, phase, avg, variance, n);
+        emit RoundScored(aggregateUid, roundId, phase, consensus, variance, independentCount, nativeWeight);
 
-        for (uint256 i = 0; i < n; i++) {
+        for (uint256 i = 0; i < verifiers.length; i++) {
             address verifier = verifiers[i];
+            if (verifier == nativeAttester) {
+                continue;
+            }
             if (suspendedUntilRound[verifier] >= roundId) {
                 continue;
             }
@@ -428,35 +500,78 @@ contract AttestiaStake {
         }
     }
 
-    function _validateAndSumScores(address[] calldata verifiers, uint16[] calldata scores)
+    function _validateRoundScores(uint32 numIndependentVerifiers, address[] calldata verifiers, uint16[] calldata scores)
         internal
         view
-        returns (uint256 sum)
+        returns (uint16 nativeScore, bool hasNative, uint256 independentSum, uint256 independentCount)
     {
         uint256 n = verifiers.length;
         if (n == 0) revert EmptyScores();
         if (n != scores.length) revert InvalidInputLength();
 
         for (uint256 i = 0; i < n; i++) {
-            address verifier = verifiers[i];
+            address participant = verifiers[i];
             uint16 score = scores[i];
             if (score > BPS) revert InvalidScore();
-            if (roleOf[verifier] != ParticipantRole.Attester) revert InvalidVerifier();
-            if (staked[verifier] < minStake) revert InvalidVerifier();
             for (uint256 j = 0; j < i; j++) {
-                if (verifiers[j] == verifier) revert DuplicateVerifier();
+                if (verifiers[j] == participant) revert DuplicateVerifier();
             }
-            sum += score;
+
+            if (participant == nativeAttester) {
+                if (nativeAttester == address(0)) revert InvalidNativeAttester();
+                if (hasNative) revert DuplicateNativeAttester();
+                hasNative = true;
+                nativeScore = score;
+                continue;
+            }
+
+            if (roleOf[participant] != ParticipantRole.Attester) revert InvalidVerifier();
+            if (staked[participant] < minStake) revert InvalidVerifier();
+            independentSum += score;
+            independentCount += 1;
         }
+
+        if (independentCount != uint256(numIndependentVerifiers)) revert IndependentCountMismatch();
+        if (nativeAttester != address(0) && !hasNative) revert InvalidNativeAttester();
+        if (independentCount == 0 && !hasNative) revert EmptyScores();
     }
 
-    function _computeVariance(uint16[] calldata scores, uint256 avg) internal pure returns (uint256 variance) {
-        uint256 n = scores.length;
-        for (uint256 i = 0; i < n; i++) {
-            uint256 d = _absDiff(scores[i], avg);
-            variance += d * d;
+    function _consensusScore(
+        uint16 nativeScore,
+        bool hasNative,
+        uint16 nativeWeightBps,
+        uint256 independentSum,
+        uint256 independentCount
+    ) internal pure returns (uint256) {
+        if (independentCount == 0) {
+            return nativeScore;
         }
-        variance /= n;
+        uint256 independentAvg = independentSum / independentCount;
+        if (!hasNative) {
+            return independentAvg;
+        }
+        return (uint256(nativeWeightBps) * uint256(nativeScore) + uint256(BPS - nativeWeightBps) * independentAvg)
+            / BPS;
+    }
+
+    function _computeIndependentVariance(address[] calldata verifiers, uint16[] calldata scores, uint256 consensus)
+        internal
+        view
+        returns (uint256 variance)
+    {
+        uint256 count;
+        for (uint256 i = 0; i < verifiers.length; i++) {
+            if (verifiers[i] == nativeAttester) {
+                continue;
+            }
+            uint256 d = _absDiff(scores[i], consensus);
+            variance += d * d;
+            count += 1;
+        }
+        if (count == 0) {
+            return 0;
+        }
+        variance /= count;
     }
 
     function _scoreVerifier(RoundContext memory ctx, address verifier, uint16 score) internal {
@@ -465,7 +580,7 @@ contract AttestiaStake {
             perf.reputationBps = BPS;
         }
 
-        uint256 deviation = _absDiff(score, ctx.avg);
+        uint256 deviation = _absDiff(score, ctx.consensusScoreBps);
         uint256 alignmentBps = _alignmentFromDeviation(deviation);
         uint256 influenceBps = _influenceFromAverageShift(ctx, score);
         uint256 weightedSignalBps =
@@ -548,9 +663,15 @@ contract AttestiaStake {
     }
 
     function _influenceFromAverageShift(RoundContext memory ctx, uint16 score) internal pure returns (uint256) {
-        if (ctx.verifierCount <= 1) return BPS;
-        uint256 avgWithout = (ctx.sumScores - uint256(score)) / (ctx.verifierCount - 1);
-        return _absDiff(ctx.avg, avgWithout);
+        if (ctx.independentCount <= 1) return BPS;
+        uint256 consensusWithout = _consensusScore(
+            ctx.nativeScore,
+            ctx.hasNative,
+            ctx.nativeWeightBps,
+            ctx.independentSum - uint256(score),
+            ctx.independentCount - 1
+        );
+        return _absDiff(ctx.consensusScoreBps, consensusWithout);
     }
 
     function _updateReputation(uint16 currentRepBps, uint16 alignmentBps) internal view returns (uint16) {

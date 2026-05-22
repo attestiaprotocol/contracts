@@ -148,7 +148,7 @@ describe("AttestiaAggregateResolver", () => {
     expect(await stake.currentRoundId()).to.equal(1n);
   });
 
-  it("reverts when numVerifiers does not match provided vectors", async () => {
+  it("reverts when independent count does not match numVerifiers", async () => {
     const [deployer, verifier] = await ethers.getSigners();
     const Fake = await ethers.getContractFactory("FakeEAS");
     const fake = await Fake.deploy();
@@ -178,7 +178,40 @@ describe("AttestiaAggregateResolver", () => {
     );
     await expect(fake.attest(await resolver.getAddress(), a)).to.be.revertedWithCustomError(
       resolver,
-      "InvalidScoreVectors",
+      "InvalidParticipantVectors",
     );
+  });
+
+  it("accepts aggregate with native attester plus independents", async () => {
+    const [deployer, verifier, native] = await ethers.getSigners();
+    const Fake = await ethers.getContractFactory("FakeEAS");
+    const fake = await Fake.deploy();
+    await fake.waitForDeployment();
+
+    const Stake = await ethers.getContractFactory("AttestiaStake");
+    const stake = (await Stake.deploy(ethers.parseEther("0.1"))) as any;
+    await stake.waitForDeployment();
+    await stake.connect(deployer).setNativeAttester(native.address);
+
+    const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
+    const resolver = await Resolver.connect(deployer).deploy(
+      await fake.getAddress(),
+      await stake.getAddress(),
+    );
+    await resolver.waitForDeployment();
+    await stake.connect(deployer).setPerformanceReporter(await resolver.getAddress());
+    await stake.connect(verifier).stake({ value: ethers.parseEther("0.1") });
+    await stake.connect(verifier).registerAsAttester();
+
+    const a = emptyAttestation(
+      deployer.address,
+      aggregateData({
+        numVerifiers: 1,
+        verifiers: [native.address, verifier.address],
+        scores: [8000, 5000],
+      }),
+    );
+    await expect(fake.attest(await resolver.getAddress(), a)).not.to.be.reverted;
+    expect(await stake.pendingRewards(native.address)).to.equal(0n);
   });
 });

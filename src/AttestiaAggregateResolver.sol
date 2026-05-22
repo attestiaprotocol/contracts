@@ -6,8 +6,12 @@ import {IEAS} from "@ethereum-attestation-service/eas-contracts/contracts/IEAS.s
 import {Attestation} from "@ethereum-attestation-service/eas-contracts/contracts/Common.sol";
 
 interface IAttestiaStakePerformance {
-    function processAggregateScores(bytes32 aggregateUid, address[] calldata verifiers, uint16[] calldata scores)
-        external;
+    function processAggregateScores(
+        bytes32 aggregateUid,
+        uint32 numIndependentVerifiers,
+        address[] calldata verifiers,
+        uint16[] calldata scores
+    ) external;
 }
 
 /// @title AttestiaAggregateResolver
@@ -20,6 +24,7 @@ contract AttestiaAggregateResolver is SchemaResolver {
     error UnauthorizedAttester();
     error ZeroAddress();
     error InvalidScoreVectors();
+    error InvalidParticipantVectors();
 
     event AggregateAccepted(bytes32 indexed aggregateUid, address indexed attester);
     event ReviewerScoresPublished(bytes32 indexed aggregateUid, uint256 verifierCount);
@@ -50,11 +55,12 @@ contract AttestiaAggregateResolver is SchemaResolver {
             uint16[] memory scores
         ) = abi.decode(attestation.data, (bytes32, uint256, uint32, uint32, bytes32, bytes32, address[], uint16[]));
 
-        if (verifiers.length != numVerifiers || scores.length != numVerifiers) revert InvalidScoreVectors();
+        if (verifiers.length != scores.length) revert InvalidScoreVectors();
+        if (verifiers.length < numVerifiers) revert InvalidParticipantVectors();
 
-        stake.processAggregateScores(attestation.uid, verifiers, scores);
+        stake.processAggregateScores(attestation.uid, numVerifiers, verifiers, scores);
         emit AggregateAccepted(attestation.uid, attestation.attester);
-        emit ReviewerScoresPublished(attestation.uid, verifiers.length);
+        emit ReviewerScoresPublished(attestation.uid, numVerifiers);
         return true;
     }
 

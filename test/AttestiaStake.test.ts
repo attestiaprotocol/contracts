@@ -118,6 +118,7 @@ describe("AttestiaStake", () => {
 
     await stake.processAggregateScores(
       ethers.keccak256(ethers.toUtf8Bytes("round-1")),
+      5,
       [alice.address, bob.address, dave.address, eve.address, frank.address],
       [5000, 5000, 5000, 8500, 5000],
     );
@@ -142,6 +143,7 @@ describe("AttestiaStake", () => {
 
     await stake.processAggregateScores(
       ethers.keccak256(ethers.toUtf8Bytes("round-bootstrap")),
+      3,
       [alice.address, bob.address, dave.address],
       [5000, 9000, 5000],
     );
@@ -234,6 +236,68 @@ describe("AttestiaStake", () => {
     expect(cfg.reputationLambdaBps).to.equal(7500);
     expect(cfg.reputationMinBps).to.equal(6500);
     expect(cfg.reputationMaxBps).to.equal(14500);
+  });
+
+  it("excludes native attester from rewards and slashing", async () => {
+    const { stake, deployer, alice, bob } = await deployStake();
+    const [, , , dave, eve, native] = await ethers.getSigners();
+
+    await stake.connect(deployer).setNativeAttester(native.address);
+    await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.001"));
+    await stake.connect(deployer).fundRewards({ value: ethers.parseEther("1") });
+
+    for (const verifier of [alice, bob, dave, eve]) {
+      await stake.connect(verifier).stake({ value: MIN });
+      await stake.connect(verifier).registerAsAttester();
+    }
+
+    await stake.processAggregateScores(
+      ethers.keccak256(ethers.toUtf8Bytes("round-native")),
+      4,
+      [native.address, alice.address, bob.address, dave.address, eve.address],
+      [9000, 5000, 5000, 5000, 8500],
+    );
+
+    const nativePerf = await stake.verifierPerformance(native.address);
+    expect(nativePerf.evaluations).to.equal(0n);
+    expect(await stake.pendingRewards(native.address)).to.equal(0n);
+
+    expect((await stake.verifierPerformance(eve.address)).evaluations).to.equal(1n);
+  });
+
+  it("uses higher native weight when few independent attesters participate", async () => {
+    const { stake, deployer, alice, bob } = await deployStake();
+    const [, , , native] = await ethers.getSigners();
+
+    await stake.connect(deployer).setNativeAttester(native.address);
+    await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.001"));
+    await stake.connect(deployer).fundRewards({ value: ethers.parseEther("1") });
+
+    for (const verifier of [alice, bob]) {
+      await stake.connect(verifier).stake({ value: MIN });
+      await stake.connect(verifier).registerAsAttester();
+    }
+
+    await stake.processAggregateScores(
+      ethers.keccak256(ethers.toUtf8Bytes("round-weighted")),
+      2,
+      [native.address, alice.address, bob.address],
+      [10_000, 5000, 5000],
+    );
+
+    const alicePerf = await stake.verifierPerformance(alice.address);
+    expect(alicePerf.evaluations).to.equal(1n);
+    expect(alicePerf.slashCount).to.equal(0n);
+    expect(await stake.nativeWeightBpsForIndependentCount(2)).to.equal(8000);
+  });
+
+  it("returns native weight tiers by independent count", async () => {
+    const { stake } = await deployStake();
+    expect(await stake.nativeWeightBpsForIndependentCount(2)).to.equal(8000);
+    expect(await stake.nativeWeightBpsForIndependentCount(7)).to.equal(5000);
+    expect(await stake.nativeWeightBpsForIndependentCount(12)).to.equal(3000);
+    expect(await stake.nativeWeightBpsForIndependentCount(18)).to.equal(2000);
+    expect(await stake.nativeWeightBpsForIndependentCount(25)).to.equal(1000);
   });
 
   it("reverts when rewards exceed funded pool", async () => {

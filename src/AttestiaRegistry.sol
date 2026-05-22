@@ -314,9 +314,17 @@ contract AttestiaRegistry {
 
         if (attestedContentHash != contentHash) revert InvalidAggregateAttestation();
         if (verifiers.length != scores.length) revert InvalidAggregateVectors();
-        if (verifiers.length != uint256(numVerifiers)) revert InvalidAggregateVectors();
 
-        return numVerifiers;
+        address native = address(stake.nativeAttester());
+        uint32 independentCount;
+        for (uint256 i = 0; i < verifiers.length; i++) {
+            if (verifiers[i] != native) {
+                independentCount += 1;
+            }
+        }
+        if (independentCount != numVerifiers) revert InvalidAggregateVectors();
+
+        return independentCount;
     }
 }
 

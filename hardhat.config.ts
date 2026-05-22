@@ -13,7 +13,11 @@ const pk = process.env.PRIVATE_KEY?.startsWith("0x")
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.24",
-    settings: { optimizer: { enabled: true, runs: 200 }, evmVersion: "cancun" },
+    settings: {
+      optimizer: { enabled: true, runs: 200 },
+      evmVersion: "cancun",
+      viaIR: true,
+    },
   },
   paths: {
     sources: "./src",
