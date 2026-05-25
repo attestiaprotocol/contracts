@@ -35,6 +35,7 @@ contract AttestiaRegistry {
         bytes32 contentHash;
         string mediaUri;
         string mediaContext;
+        string contentType;
         uint64 verificationDeadline;
         uint64 attestedAt;
         bool exists;
@@ -65,6 +66,7 @@ contract AttestiaRegistry {
         bytes32 contentHash,
         string mediaUri,
         string mediaContext,
+        string contentType,
         uint64 verificationDeadline
     );
     event VerificationWindowSet(uint64 previousWindow, uint64 newWindow);
@@ -153,6 +155,7 @@ contract AttestiaRegistry {
         bytes32 contentHash,
         string calldata mediaUri,
         string calldata mediaContext,
+        string calldata contentType,
         uint64 verificationDeadline
     ) external payable onlyContributorResolver {
         if (msg.value != contributorMediaStake) revert InvalidContributorStake();
@@ -183,6 +186,7 @@ contract AttestiaRegistry {
             contentHash: contentHash,
             mediaUri: mediaUri,
             mediaContext: mediaContext,
+            contentType: contentType,
             verificationDeadline: verificationDeadline,
             attestedAt: uint64(block.timestamp),
             exists: true
@@ -190,7 +194,7 @@ contract AttestiaRegistry {
         _contributorAttestationUids[contributor].push(uid);
 
         emit MediaRegistered(assetId, contributor, contentHash, mediaUri);
-        emit ContributorMediaAttested(uid, assetId, contributor, contentHash, mediaUri, mediaContext, verificationDeadline);
+        emit ContributorMediaAttested(uid, assetId, contributor, contentHash, mediaUri, mediaContext, contentType, verificationDeadline);
     }
 
     function getContributorMediaAttestation(bytes32 uid) external view returns (ContributorMediaAttestation memory) {

@@ -12,6 +12,7 @@ interface IAttestiaRegistryContributor {
         bytes32 contentHash,
         string calldata mediaUri,
         string calldata mediaContext,
+        string calldata contentType,
         uint64 verificationDeadline
     ) external payable;
 }
@@ -40,11 +41,11 @@ contract AttestiaContributorResolver is SchemaResolver {
         override
         returns (bool)
     {
-        (bytes32 contentHash, string memory mediaUri, string memory mediaContext, uint64 verificationDeadline) =
-            abi.decode(attestation.data, (bytes32, string, string, uint64));
+        (bytes32 contentHash, string memory mediaUri, string memory mediaContext, string memory contentType, uint64 verificationDeadline) =
+            abi.decode(attestation.data, (bytes32, string, string, string, uint64));
 
         registry.onContributorMediaAttested{value: value}(
-            attestation.uid, attestation.attester, contentHash, mediaUri, mediaContext, verificationDeadline
+            attestation.uid, attestation.attester, contentHash, mediaUri, mediaContext, contentType, verificationDeadline
         );
 
         emit ContributorAttestationAccepted(attestation.uid, attestation.attester, contentHash);

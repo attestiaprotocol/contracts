@@ -11,7 +11,7 @@ import { ethers } from "hardhat";
 import { ensureSchemaRegistered } from "./easSchemaRegistryUtils";
 
 const SCHEMA =
-  "bytes32 contentHash,string mediaUri,string mediaContext,uint64 verificationDeadline";
+  "bytes32 contentHash,string mediaUri,string mediaContext,string contentType,uint64 verificationDeadline";
 
 function contributorResolverFromEnv(): string {
   const raw = process.env.ATTESTIA_CONTRIBUTOR_RESOLVER?.trim();

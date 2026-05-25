@@ -10,11 +10,12 @@ describe("AttestiaRegistry", () => {
     contentHash: `0x${string}`;
     mediaUri: string;
     mediaContext: string;
+    contentType: string;
     verificationDeadline: bigint;
   }) {
     return ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "string", "string", "uint64"],
-      [input.contentHash, input.mediaUri, input.mediaContext, input.verificationDeadline],
+      ["bytes32", "string", "string", "string", "uint64"],
+      [input.contentHash, input.mediaUri, input.mediaContext, input.contentType, input.verificationDeadline],
     ) as `0x${string}`;
   }
 
@@ -92,6 +93,7 @@ describe("AttestiaRegistry", () => {
     contentHash: `0x${string}`;
     mediaUri: string;
     mediaContext: string;
+    contentType: string;
     deadline: bigint;
     stakeValue: bigint;
     uid?: `0x${string}`;
@@ -104,6 +106,7 @@ describe("AttestiaRegistry", () => {
         contentHash: input.contentHash,
         mediaUri: input.mediaUri,
         mediaContext: input.mediaContext,
+        contentType: input.contentType,
         verificationDeadline: input.deadline,
       }),
     );
@@ -120,6 +123,7 @@ describe("AttestiaRegistry", () => {
       contentHash: HASH,
       mediaUri: "ipfs://bafy",
       mediaContext: "context",
+      contentType: "image/png",
       deadline: 9999999999n,
       stakeValue: SUBMITTER_STAKE,
     });
@@ -143,6 +147,7 @@ describe("AttestiaRegistry", () => {
         contentHash: HASH,
         mediaUri: "ipfs://x",
         mediaContext: "x",
+        contentType: "text/plain",
         verificationDeadline: 1000n,
       }),
     );
@@ -161,6 +166,7 @@ describe("AttestiaRegistry", () => {
       contentHash: HASH,
       mediaUri: "ipfs://bafy",
       mediaContext: "context",
+      contentType: "image/png",
       deadline: 9999999999n,
       stakeValue: SUBMITTER_STAKE,
     });
@@ -202,6 +208,7 @@ describe("AttestiaRegistry", () => {
       contentHash: HASH,
       mediaUri: "ipfs://x",
       mediaContext: "x",
+      contentType: "video/mp4",
       deadline: 9999999999n,
       stakeValue: SUBMITTER_STAKE,
     });
@@ -240,6 +247,7 @@ describe("AttestiaRegistry", () => {
       contentHash: HASH,
       mediaUri: "ipfs://noscore",
       mediaContext: "no scores",
+      contentType: "audio/mpeg",
       deadline: 9999999999n,
       stakeValue: SUBMITTER_STAKE,
     });

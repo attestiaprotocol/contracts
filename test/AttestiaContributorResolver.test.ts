@@ -6,11 +6,12 @@ describe("AttestiaContributorResolver", () => {
     contentHash: `0x${string}`;
     mediaUri: string;
     mediaContext: string;
+    contentType: string;
     verificationDeadline: bigint;
   }) {
     return ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "string", "string", "uint64"],
-      [input.contentHash, input.mediaUri, input.mediaContext, input.verificationDeadline],
+      ["bytes32", "string", "string", "string", "uint64"],
+      [input.contentHash, input.mediaUri, input.mediaContext, input.contentType, input.verificationDeadline],
     );
   }
 
@@ -60,6 +61,7 @@ describe("AttestiaContributorResolver", () => {
         contentHash,
         mediaUri: "ipfs://bafy-media",
         mediaContext: "Video clip from event",
+        contentType: "video/mp4",
         verificationDeadline: deadline,
       }),
     );
@@ -74,6 +76,7 @@ describe("AttestiaContributorResolver", () => {
     expect(stored.contentHash).to.equal(contentHash);
     expect(stored.mediaUri).to.equal("ipfs://bafy-media");
     expect(stored.mediaContext).to.equal("Video clip from event");
+    expect(stored.contentType).to.equal("video/mp4");
     expect(stored.verificationDeadline).to.equal(deadline);
     expect(await registry.assetIdByContributorAttestation(uid)).to.equal(1n);
   });
@@ -107,6 +110,7 @@ describe("AttestiaContributorResolver", () => {
         contentHash: ethers.keccak256(ethers.toUtf8Bytes("x")),
         mediaUri: "ipfs://x",
         mediaContext: "x",
+        contentType: "application/octet-stream",
         verificationDeadline: 1000n,
       }),
     );

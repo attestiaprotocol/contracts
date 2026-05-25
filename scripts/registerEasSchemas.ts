@@ -1,7 +1,7 @@
 /**
  * Register the three Attestia EAS schemas on Base (Sepolia or mainnet):
  *
- * 1. **Contributor media attestation (on-chain)** — media hash + URI + context + verification deadline.
+ * 1. **Contributor media attestation (on-chain)** — media hash + URI + context + content type + verification deadline.
  * 2. **Attester scores (off-chain)** — each attester signs a score; no resolver.
  * 3. **Aggregate (on-chain)** — submitter publishes the rollup on-chain; optional
  *    `AttestiaAggregateResolver` via `ATTESTIA_AGGREGATE_RESOLVER` in `.env`.
@@ -23,7 +23,7 @@ const SCHEMAS = [
     envContributorOnchain: "NEXT_PUBLIC_EAS_SCHEMA_UID_CONTRIBUTOR_MEDIA",
     label: "ATTESTIA_CONTRIBUTOR_MEDIA_ONCHAIN",
     definition:
-      "bytes32 contentHash,string mediaUri,string mediaContext,uint64 verificationDeadline",
+      "bytes32 contentHash,string mediaUri,string mediaContext,string contentType,uint64 verificationDeadline",
   },
   {
     envScore: "NEXT_PUBLIC_EAS_SCHEMA_UID_SCORE_OFFCHAIN",
