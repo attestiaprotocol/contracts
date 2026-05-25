@@ -8,6 +8,7 @@
     "deploy:aggregate-resolver": "hardhat run scripts/deployAggregateResolver.ts --network baseSepolia",
     "deploy:contributor-resolver": "hardhat run scripts/deployContributorResolver.ts --network baseSepolia",
     "registry:set-window": "hardhat run scripts/setRegistryVerificationWindow.ts --network baseSepolia",
+    "stake:configure-rewards": "hardhat run scripts/configureStakeRewards.ts --network baseSepolia",
     "eas:register-all": "hardhat run scripts/registerEasSchemas.ts --network baseSepolia",
     "eas:register-onchain": "hardhat run scripts/registerEasOnchainSchema.ts --network baseSepolia",
     "eas:register-contributor": "hardhat run scripts/registerEasContributorOnchainSchema.ts --network baseSepolia",

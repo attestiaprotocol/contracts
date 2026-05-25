@@ -3,6 +3,7 @@ import { ethers } from "hardhat";
 
 const MIN = ethers.parseEther("0.1");
 const SUBMITTER_STAKE = ethers.parseEther("0.01");
+const BASE_REWARD = ethers.parseEther("0.002");
 const HASH = ethers.keccak256(ethers.toUtf8Bytes("content")) as `0x${string}`;
 
 describe("AttestiaRegistry", () => {
@@ -71,7 +72,7 @@ describe("AttestiaRegistry", () => {
     await fake.waitForDeployment();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = (await Stake.deploy(MIN)) as any;
+    const stake = (await Stake.deploy(MIN, BASE_REWARD)) as any;
     await stake.waitForDeployment();
 
     const Registry = await ethers.getContractFactory("AttestiaRegistry");

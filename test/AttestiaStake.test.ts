@@ -2,12 +2,13 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 
 const MIN = ethers.parseEther("0.1");
+const BASE_REWARD = ethers.parseEther("0.002");
 
 describe("AttestiaStake", () => {
   async function deployStake() {
     const [deployer, alice, bob] = await ethers.getSigners();
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(MIN);
+    const stake = await Stake.deploy(MIN, BASE_REWARD);
     await stake.waitForDeployment();
     return { stake, deployer, alice, bob };
   }

@@ -38,7 +38,7 @@ describe("AttestiaContributorResolver", () => {
     await fake.waitForDeployment();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(ethers.parseEther("0.1"));
+    const stake = await Stake.deploy(ethers.parseEther("0.1"), ethers.parseEther("0.002"));
     await stake.waitForDeployment();
 
     const Registry = await ethers.getContractFactory("AttestiaRegistry");
@@ -89,7 +89,7 @@ describe("AttestiaContributorResolver", () => {
     await fake.waitForDeployment();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(ethers.parseEther("0.1"));
+    const stake = await Stake.deploy(ethers.parseEther("0.1"), ethers.parseEther("0.002"));
     await stake.waitForDeployment();
 
     const Registry = await ethers.getContractFactory("AttestiaRegistry");

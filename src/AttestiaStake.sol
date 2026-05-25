@@ -208,11 +208,13 @@ contract AttestiaStake {
         _;
     }
 
-    constructor(uint256 minStakeWei) {
+    constructor(uint256 minStakeWei, uint256 baseRewardPerRoundWei) {
         if (minStakeWei < MIN_VERIFIER_STAKE || minStakeWei > MAX_VERIFIER_STAKE) revert InvalidParam();
         owner = msg.sender;
         performanceReporter = msg.sender;
         minStake = minStakeWei;
+        baseRewardPerRound = baseRewardPerRoundWei;
+        emit BaseRewardPerRoundSet(baseRewardPerRoundWei);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {

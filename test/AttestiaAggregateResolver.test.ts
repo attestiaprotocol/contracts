@@ -54,7 +54,7 @@ describe("AttestiaAggregateResolver", () => {
     const fakeAddr = await fake.getAddress();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = (await Stake.deploy(ethers.parseEther("0.1"))) as any;
+    const stake = (await Stake.deploy(ethers.parseEther("0.1"), 0n)) as any;
     await stake.waitForDeployment();
 
     const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
@@ -87,7 +87,7 @@ describe("AttestiaAggregateResolver", () => {
     const fakeAddr = await fake.getAddress();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = (await Stake.deploy(ethers.parseEther("0.1"))) as any;
+    const stake = (await Stake.deploy(ethers.parseEther("0.1"), ethers.parseEther("0.002"))) as any;
     await stake.waitForDeployment();
 
     const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
@@ -112,7 +112,7 @@ describe("AttestiaAggregateResolver", () => {
     await fake.waitForDeployment();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = (await Stake.deploy(ethers.parseEther("0.1"))) as any;
+    const stake = (await Stake.deploy(ethers.parseEther("0.1"), ethers.parseEther("0.002"))) as any;
     await stake.waitForDeployment();
     await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.001"));
     await stake.connect(deployer).fundRewards({ value: ethers.parseEther("1") });
@@ -155,7 +155,7 @@ describe("AttestiaAggregateResolver", () => {
     await fake.waitForDeployment();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = (await Stake.deploy(ethers.parseEther("0.1"))) as any;
+    const stake = (await Stake.deploy(ethers.parseEther("0.1"), ethers.parseEther("0.002"))) as any;
     await stake.waitForDeployment();
 
     const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
@@ -189,7 +189,7 @@ describe("AttestiaAggregateResolver", () => {
     await fake.waitForDeployment();
 
     const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = (await Stake.deploy(ethers.parseEther("0.1"))) as any;
+    const stake = (await Stake.deploy(ethers.parseEther("0.1"), 0n)) as any;
     await stake.waitForDeployment();
     await stake.connect(deployer).setNativeAttester(native.address);
 

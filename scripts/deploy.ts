@@ -31,6 +31,9 @@ async function main() {
   const minStakeWei = process.env.MIN_STAKE_WEI
     ? BigInt(process.env.MIN_STAKE_WEI)
     : ethers.parseEther("0.1");
+  const baseRewardPerRoundWei = process.env.BASE_REWARD_PER_ROUND_WEI
+    ? BigInt(process.env.BASE_REWARD_PER_ROUND_WEI)
+    : ethers.parseEther("0.002");
 
   const [deployer] = await ethers.getSigners();
   const net = await ethers.provider.getNetwork();
@@ -44,11 +47,12 @@ async function main() {
   console.log("EAS:", eas);
 
   const Stake = await ethers.getContractFactory("AttestiaStake");
-  const stake = await Stake.deploy(minStakeWei);
+  const stake = await Stake.deploy(minStakeWei, baseRewardPerRoundWei);
   await stake.waitForDeployment();
   const stakeAddr = await stake.getAddress();
   console.log("AttestiaStake", stakeAddr);
-  await verifyContract(stakeAddr, [minStakeWei]);
+  console.log("baseRewardPerRoundWei", baseRewardPerRoundWei.toString());
+  await verifyContract(stakeAddr, [minStakeWei, baseRewardPerRoundWei]);
 
   const Registry = await ethers.getContractFactory("AttestiaRegistry");
   const registry = await Registry.deploy(stakeAddr, eas);
@@ -69,6 +73,7 @@ async function main() {
   }
 
   console.log("minStakeWei", minStakeWei.toString());
+  console.log("baseRewardPerRoundWei", baseRewardPerRoundWei.toString());
 }
 
 main().catch((e) => {
