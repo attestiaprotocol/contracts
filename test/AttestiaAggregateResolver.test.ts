@@ -3,15 +3,15 @@ import { ethers } from "hardhat";
 
 describe("AttestiaAggregateResolver", () => {
   function aggregateData(input: {
+    aggregateDeepFakeRiskScore?: number;
     numVerifiers?: number;
     verifiers: string[];
-    scores: number[];
+    deepfakeRiskScores: number[];
   }) {
     return ethers.AbiCoder.defaultAbiCoder().encode(
       [
         "bytes32",
-        "uint256",
-        "uint32",
+        "uint16",
         "uint32",
         "bytes32",
         "bytes32",
@@ -20,13 +20,12 @@ describe("AttestiaAggregateResolver", () => {
       ],
       [
         ethers.keccak256(ethers.toUtf8Bytes("content")),
-        0n,
+        input.aggregateDeepFakeRiskScore ?? 0,
         input.numVerifiers ?? input.verifiers.length,
-        0,
         ethers.ZeroHash,
         ethers.ZeroHash,
         input.verifiers,
-        input.scores,
+        input.deepfakeRiskScores,
       ],
     );
   }
@@ -73,7 +72,7 @@ describe("AttestiaAggregateResolver", () => {
       deployer.address,
       aggregateData({
         verifiers: [verifier.address],
-        scores: [5000],
+        deepfakeRiskScores: [5000],
       }),
     );
     await expect(fake.attest(await resolver.getAddress(), a)).not.to.be.reverted;
@@ -138,7 +137,7 @@ describe("AttestiaAggregateResolver", () => {
       uid,
       data: aggregateData({
         verifiers: [v1.address, v2.address, v3.address, v4.address, v5.address],
-        scores: [5000, 5000, 5000, 8500, 5000],
+        deepfakeRiskScores: [6000, 6000, 6000, 4000, 6000],
       }),
     };
     await expect(fake.attest(await resolver.getAddress(), a)).not.to.be.reverted;
@@ -173,7 +172,7 @@ describe("AttestiaAggregateResolver", () => {
       aggregateData({
         numVerifiers: 2,
         verifiers: [verifier.address],
-        scores: [5000],
+        deepfakeRiskScores: [5000],
       }),
     );
     await expect(fake.attest(await resolver.getAddress(), a)).to.be.revertedWithCustomError(
@@ -208,7 +207,7 @@ describe("AttestiaAggregateResolver", () => {
       aggregateData({
         numVerifiers: 1,
         verifiers: [native.address, verifier.address],
-        scores: [8000, 5000],
+        deepfakeRiskScores: [8000, 5000],
       }),
     );
     await expect(fake.attest(await resolver.getAddress(), a)).not.to.be.reverted;

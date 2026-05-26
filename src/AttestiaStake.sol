@@ -29,9 +29,12 @@ contract AttestiaStake {
     uint16 public phase1RewardBps = 8_000;
     uint16 public phase2RewardBps = 10_000;
 
-    uint16 public phase1DeviationThresholdBps = 2_500; // 0.25
-    uint16 public phase2DeviationThresholdBps = 2_000; // 0.20
-    uint256 public phase1VarianceThresholdBps2 = 2_000_000; // 0.02 on [0,1] scores
+    /// @notice Directional slash thresholds (percent × 100, same encoding as attestation scores).
+    ///         Consensus above mid (AI-leaning): slash if attester score is below `slashLowScoreWhenConsensusHighBps`.
+    ///         Consensus below mid (human-leaning): slash if attester score is above `slashHighScoreWhenConsensusLowBps`.
+    uint16 public slashConsensusMidBps = 5_000; // 50.00%
+    uint16 public slashLowScoreWhenConsensusHighBps = 4_500; // 45.00%
+    uint16 public slashHighScoreWhenConsensusLowBps = 5_500; // 55.00%
     uint16 public phase1SlashBps = 1_000; // 10%
     uint16 public phase2SlashBps = 2_500; // 25%
 
@@ -45,7 +48,7 @@ contract AttestiaStake {
 
     /// @notice Wallet that signs the Attestia native (detector) off-chain attestation; excluded from stake rewards/slashing.
     address public nativeAttester;
-    /// @notice Native score weight w_A(N) by independent attester count N: N<5, 5≤N<10, 10≤N<15, 15≤N≤20, N>20.
+    /// @notice Native score weight w_A(N) by N independent scores in this aggregate (not network-wide attester count).
     uint16 public nativeWeightLt5Bps = 8_000;
     uint16 public nativeWeightLt10Bps = 5_000;
     uint16 public nativeWeightLt15Bps = 3_000;
@@ -79,9 +82,9 @@ contract AttestiaStake {
         uint16 phase0RewardBps;
         uint16 phase1RewardBps;
         uint16 phase2RewardBps;
-        uint16 phase1DeviationThresholdBps;
-        uint16 phase2DeviationThresholdBps;
-        uint256 phase1VarianceThresholdBps2;
+        uint16 slashConsensusMidBps;
+        uint16 slashLowScoreWhenConsensusHighBps;
+        uint16 slashHighScoreWhenConsensusLowBps;
         uint16 phase1SlashBps;
         uint16 phase2SlashBps;
         uint16 alignmentWeightBps;
@@ -134,8 +137,12 @@ contract AttestiaStake {
     event BaseRewardPerRoundSet(uint256 amount);
     event PhaseRewardBpsSet(uint16 phase0RewardBps, uint16 phase1RewardBps, uint16 phase2RewardBps);
     event RewardWeightsSet(uint16 alignmentWeightBps, uint16 influenceWeightBps);
-    event DeviationThresholdsSet(uint16 phase1DeviationThresholdBps, uint16 phase2DeviationThresholdBps);
-    event SlashingParamsSet(uint256 phase1VarianceThresholdBps2, uint16 phase1SlashBps, uint16 phase2SlashBps);
+    event DirectionalSlashThresholdsSet(
+        uint16 slashConsensusMidBps,
+        uint16 slashLowScoreWhenConsensusHighBps,
+        uint16 slashHighScoreWhenConsensusLowBps
+    );
+    event SlashRatesSet(uint16 phase1SlashBps, uint16 phase2SlashBps);
     event ReputationParamsSet(uint16 alphaBps, uint16 reputationLambdaBps, uint16 reputationMinBps, uint16 reputationMaxBps);
     event NativeAttesterSet(address indexed nativeAttester);
     event NativeWeightBpsSet(
@@ -260,23 +267,31 @@ contract AttestiaStake {
         emit RewardWeightsSet(alignmentWeight, influenceWeight);
     }
 
-    function setDeviationThresholds(uint16 phase1DeviationBps, uint16 phase2DeviationBps) external onlyOwner {
-        if (phase1DeviationBps > BPS || phase2DeviationBps > BPS) revert InvalidParam();
-        phase1DeviationThresholdBps = phase1DeviationBps;
-        phase2DeviationThresholdBps = phase2DeviationBps;
-        emit DeviationThresholdsSet(phase1DeviationBps, phase2DeviationBps);
+    function setDirectionalSlashThresholds(
+        uint16 consensusMidBps,
+        uint16 lowScoreWhenConsensusHighBps,
+        uint16 highScoreWhenConsensusLowBps
+    ) external onlyOwner {
+        if (
+            consensusMidBps > BPS || lowScoreWhenConsensusHighBps > BPS || highScoreWhenConsensusLowBps > BPS
+                || lowScoreWhenConsensusHighBps >= consensusMidBps
+                || highScoreWhenConsensusLowBps <= consensusMidBps
+        ) {
+            revert InvalidParam();
+        }
+        slashConsensusMidBps = consensusMidBps;
+        slashLowScoreWhenConsensusHighBps = lowScoreWhenConsensusHighBps;
+        slashHighScoreWhenConsensusLowBps = highScoreWhenConsensusLowBps;
+        emit DirectionalSlashThresholdsSet(
+            consensusMidBps, lowScoreWhenConsensusHighBps, highScoreWhenConsensusLowBps
+        );
     }
 
-    function setSlashingParams(uint256 phase1VarianceBps2, uint16 phase1SlashRateBps, uint16 phase2SlashRateBps)
-        external
-        onlyOwner
-    {
-        if (phase1VarianceBps2 > uint256(BPS) * uint256(BPS)) revert InvalidParam();
+    function setSlashRates(uint16 phase1SlashRateBps, uint16 phase2SlashRateBps) external onlyOwner {
         if (phase1SlashRateBps > BPS || phase2SlashRateBps > BPS) revert InvalidParam();
-        phase1VarianceThresholdBps2 = phase1VarianceBps2;
         phase1SlashBps = phase1SlashRateBps;
         phase2SlashBps = phase2SlashRateBps;
-        emit SlashingParamsSet(phase1VarianceBps2, phase1SlashRateBps, phase2SlashRateBps);
+        emit SlashRatesSet(phase1SlashRateBps, phase2SlashRateBps);
     }
 
     function setReputationParams(uint16 alpha, uint16 lambda, uint16 repMin, uint16 repMax) external onlyOwner {
@@ -324,9 +339,9 @@ contract AttestiaStake {
             phase0RewardBps: phase0RewardBps,
             phase1RewardBps: phase1RewardBps,
             phase2RewardBps: phase2RewardBps,
-            phase1DeviationThresholdBps: phase1DeviationThresholdBps,
-            phase2DeviationThresholdBps: phase2DeviationThresholdBps,
-            phase1VarianceThresholdBps2: phase1VarianceThresholdBps2,
+            slashConsensusMidBps: slashConsensusMidBps,
+            slashLowScoreWhenConsensusHighBps: slashLowScoreWhenConsensusHighBps,
+            slashHighScoreWhenConsensusLowBps: slashHighScoreWhenConsensusLowBps,
             phase1SlashBps: phase1SlashBps,
             phase2SlashBps: phase2SlashBps,
             alignmentWeightBps: alignmentWeightBps,
@@ -460,7 +475,7 @@ contract AttestiaStake {
     /// @notice Called by the aggregate resolver to score independent attester round performance.
     /// @dev `numIndependentVerifiers` is N (excludes the native attester). `verifiers`/`scores` may include the
     ///      native wallet once; it is identified via `nativeAttester` and is not rewarded or slashed.
-    ///      Scores are in [0, 10_000] where 10_000 maps to 1.0.
+    ///      Scores are deepfake-risk percent with two decimals: 80.56% → 8056, max 10_000 (= 100.00%).
     function processAggregateScores(
         bytes32 aggregateUid,
         uint32 numIndependentVerifiers,
@@ -598,12 +613,12 @@ contract AttestiaStake {
 
         bool shouldSlash;
         uint16 slashRateBps;
-        if (ctx.phase == NetworkPhase.WeakConsensus) {
-            shouldSlash = deviation > phase1DeviationThresholdBps && ctx.variance < phase1VarianceThresholdBps2;
-            slashRateBps = phase1SlashBps;
-        } else if (ctx.phase == NetworkPhase.Mature) {
-            shouldSlash = deviation > phase2DeviationThresholdBps;
-            slashRateBps = phase2SlashBps;
+        if (ctx.phase == NetworkPhase.WeakConsensus || ctx.phase == NetworkPhase.Mature) {
+            if (_shouldDirectionalSlash(ctx.consensusScoreBps, score)) {
+                shouldSlash = true;
+                slashRateBps =
+                    ctx.phase == NetworkPhase.WeakConsensus ? phase1SlashBps : phase2SlashBps;
+            }
         }
 
         uint256 slashAmount;
@@ -686,6 +701,17 @@ contract AttestiaStake {
 
     function _absDiff(uint256 a, uint256 b) internal pure returns (uint256) {
         return a >= b ? a - b : b - a;
+    }
+
+    /// @dev Slash when an attester disagrees with the crowd on which side of 50% deepfake risk the asset is on.
+    function _shouldDirectionalSlash(uint256 consensusScoreBps, uint16 score) internal view returns (bool) {
+        if (consensusScoreBps > slashConsensusMidBps) {
+            return score < slashLowScoreWhenConsensusHighBps;
+        }
+        if (consensusScoreBps < slashConsensusMidBps) {
+            return score > slashHighScoreWhenConsensusLowBps;
+        }
+        return false;
     }
 
     function _reserveReward(uint256 amount) internal {

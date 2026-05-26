@@ -22,15 +22,15 @@ describe("AttestiaRegistry", () => {
 
   function aggregateData(input: {
     contentHash: `0x${string}`;
+    aggregateDeepFakeRiskScore?: number;
     numVerifiers?: number;
     verifiers: string[];
-    scores: number[];
+    deepfakeRiskScores: number[];
   }) {
     return ethers.AbiCoder.defaultAbiCoder().encode(
       [
         "bytes32",
-        "uint256",
-        "uint32",
+        "uint16",
         "uint32",
         "bytes32",
         "bytes32",
@@ -39,13 +39,12 @@ describe("AttestiaRegistry", () => {
       ],
       [
         input.contentHash,
-        0n,
+        input.aggregateDeepFakeRiskScore ?? 0,
         input.numVerifiers ?? input.verifiers.length,
-        0,
         ethers.ZeroHash,
         ethers.ZeroHash,
         input.verifiers,
-        input.scores,
+        input.deepfakeRiskScores,
       ],
     ) as `0x${string}`;
   }
@@ -180,7 +179,7 @@ describe("AttestiaRegistry", () => {
         aggregateData({
           contentHash: HASH,
           verifiers: [verifier.address],
-          scores: [5000],
+          deepfakeRiskScores: [5000],
         }),
       ),
     );
@@ -223,7 +222,7 @@ describe("AttestiaRegistry", () => {
           contentHash: HASH,
           numVerifiers: 0,
           verifiers: [],
-          scores: [],
+          deepfakeRiskScores: [],
         }),
       ),
     );

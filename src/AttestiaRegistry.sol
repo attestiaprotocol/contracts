@@ -301,23 +301,21 @@ contract AttestiaRegistry {
 
         (
             bytes32 attestedContentHash,
-            uint256 aggregateScore,
+            uint16 aggregateDeepFakeRiskScore,
             uint32 numVerifiers,
-            uint32 confidenceBps,
             bytes32 payloadHash,
             bytes32 proofCommitment,
             address[] memory verifiers,
-            uint16[] memory scores
-        ) = abi.decode(a.data, (bytes32, uint256, uint32, uint32, bytes32, bytes32, address[], uint16[]));
+            uint16[] memory deepfakeRiskScores
+        ) = abi.decode(a.data, (bytes32, uint16, uint32, bytes32, bytes32, address[], uint16[]));
 
         // Silence unused locals (kept for schema compatibility / forward-proofing).
-        aggregateScore;
-        confidenceBps;
+        aggregateDeepFakeRiskScore;
         payloadHash;
         proofCommitment;
 
         if (attestedContentHash != contentHash) revert InvalidAggregateAttestation();
-        if (verifiers.length != scores.length) revert InvalidAggregateVectors();
+        if (verifiers.length != deepfakeRiskScores.length) revert InvalidAggregateVectors();
 
         address native = address(stake.nativeAttester());
         uint32 independentCount;

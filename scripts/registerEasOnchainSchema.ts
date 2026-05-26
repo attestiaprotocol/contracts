@@ -13,8 +13,9 @@
 import { ethers } from "hardhat";
 import { ensureSchemaRegistered } from "./easSchemaRegistryUtils";
 
+/** Percent fields use uint16 with 2 decimal places: 89.83% → 8983 (value × 100, max 10000). */
 const SCHEMA =
-  "bytes32 contentHash,uint256 aggregateScore,uint32 numVerifiers,uint32 confidenceBps,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiers,uint16[] scores";
+  "bytes32 contentHash,uint16 aggregateDeepFakeRiskScore,uint32 numVerifiers,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiers,uint16[] deepfakeRiskScores";
 
 function resolverFromEnv(): string {
   const raw = process.env.ATTESTIA_AGGREGATE_RESOLVER?.trim();

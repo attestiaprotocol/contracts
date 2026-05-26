@@ -105,7 +105,7 @@ describe("AttestiaStake", () => {
     ).to.be.revertedWithCustomError(stake, "NoRewards");
   });
 
-  it("tracks performance and applies phase-1 slashing", async () => {
+  it("slashes when consensus is AI-leaning and attester scores too human", async () => {
     const { stake, deployer, alice, bob } = await deployStake();
     const [, , , dave, eve, frank] = await ethers.getSigners();
 
@@ -121,13 +121,35 @@ describe("AttestiaStake", () => {
       ethers.keccak256(ethers.toUtf8Bytes("round-1")),
       5,
       [alice.address, bob.address, dave.address, eve.address, frank.address],
-      [5000, 5000, 5000, 8500, 5000],
+      [6000, 6000, 6000, 4000, 6000],
     );
 
     const perfOutlier = await stake.verifierPerformance(eve.address);
     expect(perfOutlier.slashCount).to.equal(1n);
     expect(perfOutlier.consecutiveGood).to.equal(0n);
     expect(await stake.suspendedUntilRound(eve.address)).to.equal(2n);
+  });
+
+  it("slashes when consensus is human-leaning and attester scores too AI", async () => {
+    const { stake, deployer, alice, bob } = await deployStake();
+    const [, , , dave, eve, frank] = await ethers.getSigners();
+
+    await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.001"));
+    await stake.connect(deployer).fundRewards({ value: ethers.parseEther("1") });
+
+    for (const verifier of [alice, bob, dave, eve, frank]) {
+      await stake.connect(verifier).stake({ value: MIN });
+      await stake.connect(verifier).registerAsAttester();
+    }
+
+    await stake.processAggregateScores(
+      ethers.keccak256(ethers.toUtf8Bytes("round-human")),
+      5,
+      [alice.address, bob.address, dave.address, eve.address, frank.address],
+      [4000, 4000, 4000, 6000, 4000],
+    );
+
+    expect((await stake.verifierPerformance(eve.address)).slashCount).to.equal(1n);
   });
 
   it("does not slash in bootstrapping phase", async () => {
@@ -159,8 +181,8 @@ describe("AttestiaStake", () => {
 
     await stake.connect(deployer).setPhaseRewardBps(4500, 7500, 10000);
     await stake.connect(deployer).setRewardWeights(8500, 1500);
-    await stake.connect(deployer).setDeviationThresholds(2300, 1800);
-    await stake.connect(deployer).setSlashingParams(1_500_000, 900, 2500);
+    await stake.connect(deployer).setDirectionalSlashThresholds(5000, 4500, 5500);
+    await stake.connect(deployer).setSlashRates(900, 2500);
     await stake.connect(deployer).setReputationParams(35000, 7000, 6000, 14000);
 
     expect(await stake.phase0RewardBps()).to.equal(4500);
@@ -168,9 +190,9 @@ describe("AttestiaStake", () => {
     expect(await stake.phase2RewardBps()).to.equal(10000);
     expect(await stake.alignmentWeightBps()).to.equal(8500);
     expect(await stake.influenceWeightBps()).to.equal(1500);
-    expect(await stake.phase1DeviationThresholdBps()).to.equal(2300);
-    expect(await stake.phase2DeviationThresholdBps()).to.equal(1800);
-    expect(await stake.phase1VarianceThresholdBps2()).to.equal(1_500_000n);
+    expect(await stake.slashConsensusMidBps()).to.equal(5000);
+    expect(await stake.slashLowScoreWhenConsensusHighBps()).to.equal(4500);
+    expect(await stake.slashHighScoreWhenConsensusLowBps()).to.equal(5500);
     expect(await stake.phase1SlashBps()).to.equal(900);
     expect(await stake.phase2SlashBps()).to.equal(2500);
     expect(await stake.alphaBps()).to.equal(35000);
@@ -191,11 +213,11 @@ describe("AttestiaStake", () => {
     ).to.be.revertedWithCustomError(stake, "InvalidParam");
 
     await expect(
-      stake.connect(deployer).setDeviationThresholds(10001, 2000),
+      stake.connect(deployer).setDirectionalSlashThresholds(5000, 5000, 5500),
     ).to.be.revertedWithCustomError(stake, "InvalidParam");
 
     await expect(
-      stake.connect(deployer).setSlashingParams(100_000_001, 500, 500),
+      stake.connect(deployer).setSlashRates(10_001, 500),
     ).to.be.revertedWithCustomError(stake, "InvalidParam");
 
     await expect(
@@ -217,8 +239,8 @@ describe("AttestiaStake", () => {
     await stake.connect(deployer).setBaseRewardPerRound(ethers.parseEther("0.002"));
     await stake.connect(deployer).setPhaseRewardBps(4200, 7800, 10000);
     await stake.connect(deployer).setRewardWeights(7000, 3000);
-    await stake.connect(deployer).setDeviationThresholds(2100, 1700);
-    await stake.connect(deployer).setSlashingParams(1_600_000, 800, 2200);
+    await stake.connect(deployer).setDirectionalSlashThresholds(5100, 4400, 5600);
+    await stake.connect(deployer).setSlashRates(800, 2200);
     await stake.connect(deployer).setReputationParams(33000, 7500, 6500, 14500);
 
     const cfg = await stake.getEconomicConfig();
@@ -228,9 +250,9 @@ describe("AttestiaStake", () => {
     expect(cfg.phase2RewardBps).to.equal(10000);
     expect(cfg.alignmentWeightBps).to.equal(7000);
     expect(cfg.influenceWeightBps).to.equal(3000);
-    expect(cfg.phase1DeviationThresholdBps).to.equal(2100);
-    expect(cfg.phase2DeviationThresholdBps).to.equal(1700);
-    expect(cfg.phase1VarianceThresholdBps2).to.equal(1_600_000n);
+    expect(cfg.slashConsensusMidBps).to.equal(5100);
+    expect(cfg.slashLowScoreWhenConsensusHighBps).to.equal(4400);
+    expect(cfg.slashHighScoreWhenConsensusLowBps).to.equal(5600);
     expect(cfg.phase1SlashBps).to.equal(800);
     expect(cfg.phase2SlashBps).to.equal(2200);
     expect(cfg.alphaBps).to.equal(33000);

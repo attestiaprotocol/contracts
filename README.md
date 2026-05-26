@@ -64,7 +64,8 @@ sequenceDiagram
 - Native attester:
   - Configure `AttestiaStake.nativeAttester` to the wallet that signs Attestia detector off-chain scores.
   - Aggregate `verifiers[]` may include that address once; `numVerifiers` is the count of independent attesters only.
-  - Native score weight `w_A(N)` by independent count N: `<5` 80%, `5–9` 50%, `10–14` 30%, `15–20` 20%, `>20` 10% (governance-tunable via `setNativeWeightBps`); native is not rewarded or slashed.
+  - Native score weight `w_A(N)` by independent count **in that aggregate** (not network size): `<5` 80%, `5–9` 50%, `10–14` 30%, `15–20` 20%, `>20` 10% (`setNativeWeightBps`); native is not rewarded or slashed.
+  - Deepfake risk scores use **percent × 100** on-chain (e.g. 80.56% → `8056`, max `10000`). Slashing (weak/mature phases only): if consensus &gt; 50% and attester &lt; 45%, or consensus &lt; 50% and attester &gt; 55% (`setDirectionalSlashThresholds`, `setSlashRates`).
 
 ### Media state machine
 
