@@ -14,7 +14,7 @@ interface IAttestiaRegistryContributor {
         string calldata mediaContext,
         string calldata contentType,
         uint64 verificationDeadline
-    ) external payable;
+    ) external;
 }
 
 /// @title AttestiaContributorResolver
@@ -33,10 +33,10 @@ contract AttestiaContributorResolver is SchemaResolver {
     }
 
     function isPayable() public pure override returns (bool) {
-        return true;
+        return false;
     }
 
-    function onAttest(Attestation calldata attestation, uint256 value)
+    function onAttest(Attestation calldata attestation, uint256 /*value*/)
         internal
         override
         returns (bool)
@@ -44,7 +44,7 @@ contract AttestiaContributorResolver is SchemaResolver {
         (bytes32 contentHash, string memory mediaUri, string memory mediaContext, string memory contentType, uint64 verificationDeadline) =
             abi.decode(attestation.data, (bytes32, string, string, string, uint64));
 
-        registry.onContributorMediaAttested{value: value}(
+        registry.onContributorMediaAttested(
             attestation.uid, attestation.attester, contentHash, mediaUri, mediaContext, contentType, verificationDeadline
         );
 

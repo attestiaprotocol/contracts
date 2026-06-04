@@ -1,9 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployAttestiaStake } from "./helpers/stakeToken";
 
-const MIN = ethers.parseEther("0.1");
-const SUBMITTER_STAKE = ethers.parseEther("0.01");
-const BASE_REWARD = ethers.parseEther("0.002");
 const HASH = ethers.keccak256(ethers.toUtf8Bytes("content")) as `0x${string}`;
 
 describe("AttestiaRegistry", () => {
@@ -70,16 +68,15 @@ describe("AttestiaRegistry", () => {
     const fake = await Fake.deploy();
     await fake.waitForDeployment();
 
-    const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = (await Stake.deploy(MIN, BASE_REWARD)) as any;
-    await stake.waitForDeployment();
-
+    const { stake, stakeAddr } = await deployAttestiaStake();
     const Registry = await ethers.getContractFactory("AttestiaRegistry");
-    const reg = (await Registry.deploy(await stake.getAddress(), await fake.getAddress())) as any;
+    const reg = (await Registry.deploy(stakeAddr, await fake.getAddress())) as any;
     await reg.waitForDeployment();
-    await stake.connect(deployer).setRegistry(await reg.getAddress());
+    const regAddr = await reg.getAddress();
+    await stake.connect(deployer).setRegistry(regAddr);
+
     const Resolver = await ethers.getContractFactory("AttestiaContributorResolver");
-    const resolver = (await Resolver.deploy(await fake.getAddress(), await reg.getAddress())) as any;
+    const resolver = (await Resolver.deploy(await fake.getAddress(), regAddr)) as any;
     await resolver.waitForDeployment();
     await reg.connect(deployer).setContributorResolver(await resolver.getAddress());
 
@@ -95,7 +92,6 @@ describe("AttestiaRegistry", () => {
     mediaContext: string;
     contentType: string;
     deadline: bigint;
-    stakeValue: bigint;
     uid?: `0x${string}`;
   }) {
     const uid = (input.uid ?? ethers.keccak256(ethers.toUtf8Bytes(`contrib-${Date.now()}`))) as `0x${string}`;
@@ -110,11 +106,11 @@ describe("AttestiaRegistry", () => {
         verificationDeadline: input.deadline,
       }),
     );
-    await input.fake.attest(input.resolver, attestation, { value: input.stakeValue });
+    await input.fake.attest(input.resolver, attestation);
     return uid;
   }
 
-  it("registers media from contributor resolver onAttest", async () => {
+  it("registers media from contributor resolver onAttest without stake", async () => {
     const { fake, reg, resolver, sub } = await deployFixture();
     const uid = await attestContributorMedia({
       fake,
@@ -125,7 +121,6 @@ describe("AttestiaRegistry", () => {
       mediaContext: "context",
       contentType: "image/png",
       deadline: 9999999999n,
-      stakeValue: SUBMITTER_STAKE,
     });
 
     expect(await reg.nextAssetId()).to.equal(1n);
@@ -134,31 +129,11 @@ describe("AttestiaRegistry", () => {
     expect(media.owner).to.equal(sub.address);
     expect(media.contentHash).to.equal(HASH);
     expect(media.uri).to.equal("ipfs://bafy");
-    expect(media.contributorStake).to.equal(SUBMITTER_STAKE);
+    expect(media.finalized).to.equal(false);
   });
 
-  it("reverts if contributor stake is wrong during resolver callback", async () => {
-    const { fake, reg, resolver, sub } = await deployFixture();
-    const uid = ethers.keccak256(ethers.toUtf8Bytes("bad-stake")) as `0x${string}`;
-    const attestation = easAttestation(
-      sub.address,
-      uid,
-      contributorData({
-        contentHash: HASH,
-        mediaUri: "ipfs://x",
-        mediaContext: "x",
-        contentType: "text/plain",
-        verificationDeadline: 1000n,
-      }),
-    );
-    await expect(fake.attest(resolver, attestation, { value: ethers.parseEther("0.005") })).to.be.revertedWithCustomError(
-      reg,
-      "InvalidContributorStake",
-    );
-  });
-
-  it("finalizes with 90% refund when aggregate includes scores", async () => {
-    const { fake, stake, reg, resolver, sub, verifier } = await deployFixture();
+  it("finalizes with score count when aggregate includes verifiers", async () => {
+    const { fake, reg, resolver, sub, verifier } = await deployFixture();
     const uid = await attestContributorMedia({
       fake,
       resolver,
@@ -168,7 +143,6 @@ describe("AttestiaRegistry", () => {
       mediaContext: "context",
       contentType: "image/png",
       deadline: 9999999999n,
-      stakeValue: SUBMITTER_STAKE,
     });
 
     const aggregateUid = ethers.keccak256(ethers.toUtf8Bytes("aggregate-1")) as `0x${string}`;
@@ -186,20 +160,15 @@ describe("AttestiaRegistry", () => {
 
     await ethers.provider.send("evm_increaseTime", [15 * 60 + 1]);
     await ethers.provider.send("evm_mine", []);
-    await reg.connect(sub).finalizeWithEASByContributorUid(
-      uid,
-      aggregateUid,
-    );
+    await reg.connect(sub).finalizeWithEASByContributorUid(uid, aggregateUid);
 
     const m = await reg.getMedia(1n);
     expect(m.easAttestationUid).to.equal(aggregateUid);
-    expect(m.refundedAmount).to.equal(ethers.parseEther("0.009"));
-    expect(m.networkFeeAmount).to.equal(ethers.parseEther("0.001"));
-    expect(await reg.accruedNetworkFees()).to.equal(ethers.parseEther("0.001"));
-    expect(await stake.rewardPoolWei()).to.equal(ethers.parseEther("0.001"));
+    expect(m.numScoresProvided).to.equal(1);
+    expect(m.finalized).to.equal(true);
   });
 
-  it("returns 100% when aggregate has zero scores", async () => {
+  it("finalizes with zero scores when aggregate has no verifiers", async () => {
     const { fake, reg, resolver, sub } = await deployFixture();
     const uid = await attestContributorMedia({
       fake,
@@ -210,7 +179,6 @@ describe("AttestiaRegistry", () => {
       mediaContext: "x",
       contentType: "video/mp4",
       deadline: 9999999999n,
-      stakeValue: SUBMITTER_STAKE,
     });
 
     const aggregateUid = ethers.keccak256(ethers.toUtf8Bytes("aggregate-2")) as `0x${string}`;
@@ -229,16 +197,14 @@ describe("AttestiaRegistry", () => {
 
     await ethers.provider.send("evm_increaseTime", [15 * 60 + 1]);
     await ethers.provider.send("evm_mine", []);
-    await reg.connect(sub).finalizeWithEASByContributorUid(
-      uid,
-      aggregateUid,
-    );
+    await reg.connect(sub).finalizeWithEASByContributorUid(uid, aggregateUid);
+
     const m = await reg.getMedia(1n);
-    expect(m.refundedAmount).to.equal(SUBMITTER_STAKE);
-    expect(m.networkFeeAmount).to.equal(0n);
+    expect(m.numScoresProvided).to.equal(0);
+    expect(m.finalized).to.equal(true);
   });
 
-  it("returns 100% without aggregate UID when no scores were submitted", async () => {
+  it("finalizes without aggregate UID when no scores were submitted", async () => {
     const { reg, resolver, fake, sub } = await deployFixture();
     const uid = await attestContributorMedia({
       fake,
@@ -249,7 +215,6 @@ describe("AttestiaRegistry", () => {
       mediaContext: "no scores",
       contentType: "audio/mpeg",
       deadline: 9999999999n,
-      stakeValue: SUBMITTER_STAKE,
     });
 
     await ethers.provider.send("evm_increaseTime", [15 * 60 + 1]);
@@ -259,8 +224,6 @@ describe("AttestiaRegistry", () => {
     const m = await reg.getMedia(1n);
     expect(m.easAttestationUid).to.equal(ethers.ZeroHash);
     expect(m.numScoresProvided).to.equal(0);
-    expect(m.refundedAmount).to.equal(SUBMITTER_STAKE);
-    expect(m.networkFeeAmount).to.equal(0n);
-    expect(await reg.accruedNetworkFees()).to.equal(0n);
+    expect(m.finalized).to.equal(true);
   });
 });

@@ -1,21 +1,28 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
 /// @title AttestiaStake — stake, attester signup, slashing, rewards (Base)
-/// @dev Only attesters are registered on-chain. Submitters are handled off-chain.
+/// @dev Stakes and rewards use a single ERC-20 (e.g. USDC). Only attesters are registered on-chain.
 contract AttestiaStake {
+    using SafeERC20 for IERC20;
+
     enum ParticipantRole {
         None,
         Attester
     }
+
+    IERC20 public immutable stakeToken;
 
     address public owner;
     address public performanceReporter;
     address public registry;
     uint256 public minStake;
     uint256 public baseRewardPerRound;
-    uint256 public rewardPoolWei;
-    uint256 public totalPendingRewardsWei;
+    uint256 public rewardPoolBalance;
+    uint256 public totalPendingRewards;
 
     mapping(address => uint256) public staked;
     mapping(address => uint256) public pendingRewards;
@@ -118,7 +125,7 @@ contract AttestiaStake {
         uint16 reputationBps;
         uint64 evaluations;
         uint64 slashCount;
-        uint256 stakedWei;
+        uint256 stakedAmount;
     }
 
     uint256 private _locked;
@@ -133,7 +140,6 @@ contract AttestiaStake {
     event RegistrarRegisteredAttester(address indexed registrar, address indexed account);
     event PerformanceReporterSet(address indexed reporter);
     event RegistrySet(address indexed registry);
-    event ContributorFeesDeposited(address indexed registry, uint256 amount);
     event BaseRewardPerRoundSet(uint256 amount);
     event PhaseRewardBpsSet(uint16 phase0RewardBps, uint16 phase1RewardBps, uint16 phase2RewardBps);
     event RewardWeightsSet(uint16 alignmentWeightBps, uint16 influenceWeightBps);
@@ -165,20 +171,18 @@ contract AttestiaStake {
         bytes32 indexed aggregateUid,
         uint64 indexed roundId,
         address indexed verifier,
-        uint256 rewardWei,
-        uint256 slashWei
+        uint256 rewardAmount,
+        uint256 slashAmount
     );
 
     error BelowMinStake();
     error InsufficientStake();
     error NoRewards();
-    error TransferFailed();
     error ReentrantCall();
     error NotOwner();
     error ZeroAddress();
     error AlreadyRegistered();
     error NotPerformanceReporter();
-    error NotRegistry();
     error InvalidInputLength();
     error EmptyScores();
     error InvalidScore();
@@ -190,8 +194,9 @@ contract AttestiaStake {
     error InvalidParam();
     error InsufficientRewardPool();
 
-    uint256 public constant MIN_VERIFIER_STAKE = 0.05 ether;
-    uint256 public constant MAX_VERIFIER_STAKE = 0.2 ether;
+    /// @dev USDC smallest units (6 decimals). Rounded from former ETH amounts at ~$3.5k/ETH.
+    uint256 public constant MIN_VERIFIER_STAKE = 175 * 1e6; // was 0.05 ETH → 175 USDC
+    uint256 public constant MAX_VERIFIER_STAKE = 700 * 1e6; // was 0.2 ETH → 700 USDC
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -210,18 +215,22 @@ contract AttestiaStake {
         _;
     }
 
-    modifier onlyRegistry() {
-        if (msg.sender != registry) revert NotRegistry();
-        _;
-    }
-
-    constructor(uint256 minStakeWei, uint256 baseRewardPerRoundWei) {
-        if (minStakeWei < MIN_VERIFIER_STAKE || minStakeWei > MAX_VERIFIER_STAKE) revert InvalidParam();
+    /// @param stakeToken_ ERC-20 used for attester stake and rewards (e.g. USDC on Base).
+    /// @param minStake_ Minimum attester stake in token smallest units.
+    /// @param baseRewardPerRound_ Base reward per scored round in token smallest units.
+    constructor(address stakeToken_, uint256 minStake_, uint256 baseRewardPerRound_) {
+        if (stakeToken_ == address(0)) revert ZeroAddress();
+        if (
+            minStake_ < MIN_VERIFIER_STAKE || minStake_ > MAX_VERIFIER_STAKE || baseRewardPerRound_ == 0
+        ) {
+            revert InvalidParam();
+        }
+        stakeToken = IERC20(stakeToken_);
         owner = msg.sender;
         performanceReporter = msg.sender;
-        minStake = minStakeWei;
-        baseRewardPerRound = baseRewardPerRoundWei;
-        emit BaseRewardPerRoundSet(baseRewardPerRoundWei);
+        minStake = minStake_;
+        baseRewardPerRound = baseRewardPerRound_;
+        emit BaseRewardPerRoundSet(baseRewardPerRound_);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -248,6 +257,7 @@ contract AttestiaStake {
     }
 
     function setBaseRewardPerRound(uint256 amount) external onlyOwner {
+        if (amount == 0) revert InvalidParam();
         baseRewardPerRound = amount;
         emit BaseRewardPerRoundSet(amount);
     }
@@ -359,11 +369,13 @@ contract AttestiaStake {
         });
     }
 
-    function stake() external payable {
-        if (msg.value == 0) revert InsufficientStake();
-        if (staked[msg.sender] + msg.value < minStake) revert BelowMinStake();
-        staked[msg.sender] += msg.value;
-        emit Staked(msg.sender, msg.value);
+    /// @notice Stake ERC-20; caller must approve this contract first.
+    function stake(uint256 amount) external nonReentrant {
+        if (amount == 0) revert InsufficientStake();
+        stakeToken.safeTransferFrom(msg.sender, address(this), amount);
+        if (staked[msg.sender] + amount < minStake) revert BelowMinStake();
+        staked[msg.sender] += amount;
+        emit Staked(msg.sender, amount);
     }
 
     /// @notice Requires `staked[msg.sender] >= minStake` (e.g. after `stake()` is confirmed).
@@ -421,7 +433,7 @@ contract AttestiaStake {
                 reputationBps: rep,
                 evaluations: p.evaluations,
                 slashCount: p.slashCount,
-                stakedWei: staked[account]
+                stakedAmount: staked[account]
             });
         }
     }
@@ -430,8 +442,7 @@ contract AttestiaStake {
         uint256 s = staked[msg.sender];
         if (amount > s) revert InsufficientStake();
         staked[msg.sender] = s - amount;
-        (bool ok,) = payable(msg.sender).call{value: amount}("");
-        if (!ok) revert TransferFailed();
+        stakeToken.safeTransfer(msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
     }
 
@@ -444,15 +455,12 @@ contract AttestiaStake {
         emit Slashed(participant, take, reason);
     }
 
-    function fundRewards() external payable onlyOwner {
-        rewardPoolWei += msg.value;
-        emit RewardsFunded(msg.value);
-    }
-
-    /// @notice Receives contributor network fees from AttestiaRegistry.
-    function depositContributorFees() external payable onlyRegistry {
-        rewardPoolWei += msg.value;
-        emit ContributorFeesDeposited(msg.sender, msg.value);
+    /// @notice Owner tops up the reward pool; must approve `stakeToken` first.
+    function fundRewards(uint256 amount) external onlyOwner {
+        if (amount == 0) revert InvalidParam();
+        stakeToken.safeTransferFrom(msg.sender, address(this), amount);
+        rewardPoolBalance += amount;
+        emit RewardsFunded(amount);
     }
 
     function grantReward(address recipient, uint256 amount) external onlyOwner {
@@ -465,10 +473,9 @@ contract AttestiaStake {
         uint256 r = pendingRewards[msg.sender];
         if (r == 0) revert NoRewards();
         pendingRewards[msg.sender] = 0;
-        totalPendingRewardsWei -= r;
-        rewardPoolWei -= r;
-        (bool ok,) = payable(msg.sender).call{value: r}("");
-        if (!ok) revert TransferFailed();
+        totalPendingRewards -= r;
+        rewardPoolBalance -= r;
+        stakeToken.safeTransfer(msg.sender, r);
         emit Rewarded(msg.sender, r);
     }
 
@@ -715,12 +722,7 @@ contract AttestiaStake {
     }
 
     function _reserveReward(uint256 amount) internal {
-        if (totalPendingRewardsWei + amount > rewardPoolWei) revert InsufficientRewardPool();
-        totalPendingRewardsWei += amount;
-    }
-
-    receive() external payable {
-        rewardPoolWei += msg.value;
-        emit RewardsFunded(msg.value);
+        if (totalPendingRewards + amount > rewardPoolBalance) revert InsufficientRewardPool();
+        totalPendingRewards += amount;
     }
 }

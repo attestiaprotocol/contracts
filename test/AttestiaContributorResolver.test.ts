@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { deployAttestiaStake } from "./helpers/stakeToken";
 
 describe("AttestiaContributorResolver", () => {
   function contributorData(input: {
@@ -37,17 +38,16 @@ describe("AttestiaContributorResolver", () => {
     const fake = await Fake.deploy();
     await fake.waitForDeployment();
 
-    const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(ethers.parseEther("0.1"), ethers.parseEther("0.002"));
-    await stake.waitForDeployment();
+    const { stake, stakeAddr } = await deployAttestiaStake();
 
     const Registry = await ethers.getContractFactory("AttestiaRegistry");
-    const registry = await Registry.deploy(await stake.getAddress(), await fake.getAddress());
+    const registry = await Registry.deploy(stakeAddr, await fake.getAddress());
     await registry.waitForDeployment();
-    await stake.connect(deployer).setRegistry(await registry.getAddress());
+    const regAddr = await registry.getAddress();
+    await stake.connect(deployer).setRegistry(regAddr);
 
     const Resolver = await ethers.getContractFactory("AttestiaContributorResolver");
-    const resolver = await Resolver.deploy(await fake.getAddress(), await registry.getAddress());
+    const resolver = await Resolver.deploy(await fake.getAddress(), regAddr);
     await resolver.waitForDeployment();
     await registry.connect(deployer).setContributorResolver(await resolver.getAddress());
 
@@ -66,8 +66,7 @@ describe("AttestiaContributorResolver", () => {
       }),
     );
 
-    const requiredStake = await registry.contributorMediaStake();
-    await expect(fake.attest(await resolver.getAddress(), a, { value: requiredStake })).not.to.be.reverted;
+    await expect(fake.attest(await resolver.getAddress(), a)).not.to.be.reverted;
 
     const stored = await registry.getContributorMediaAttestation(uid);
     expect(stored.exists).to.equal(true);
@@ -88,17 +87,16 @@ describe("AttestiaContributorResolver", () => {
     const fake = await Fake.deploy();
     await fake.waitForDeployment();
 
-    const Stake = await ethers.getContractFactory("AttestiaStake");
-    const stake = await Stake.deploy(ethers.parseEther("0.1"), ethers.parseEther("0.002"));
-    await stake.waitForDeployment();
+    const { stake, stakeAddr } = await deployAttestiaStake();
 
     const Registry = await ethers.getContractFactory("AttestiaRegistry");
-    const registry = await Registry.deploy(await stake.getAddress(), await fake.getAddress());
+    const registry = await Registry.deploy(stakeAddr, await fake.getAddress());
     await registry.waitForDeployment();
-    await stake.connect(deployer).setRegistry(await registry.getAddress());
+    const regAddr = await registry.getAddress();
+    await stake.connect(deployer).setRegistry(regAddr);
 
     const Resolver = await ethers.getContractFactory("AttestiaContributorResolver");
-    const resolver = await Resolver.deploy(await fake.getAddress(), await registry.getAddress());
+    const resolver = await Resolver.deploy(await fake.getAddress(), regAddr);
     await resolver.waitForDeployment();
     await registry.connect(deployer).setContributorResolver(await resolver.getAddress());
 
@@ -115,7 +113,6 @@ describe("AttestiaContributorResolver", () => {
       }),
     );
 
-    const requiredStake = await registry.contributorMediaStake();
-    await expect(fake.attest(await resolver.getAddress(), a, { value: requiredStake })).not.to.be.reverted;
+    await expect(fake.attest(await resolver.getAddress(), a)).not.to.be.reverted;
   });
 });

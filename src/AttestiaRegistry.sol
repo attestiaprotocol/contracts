@@ -4,10 +4,8 @@ pragma solidity ^0.8.20;
 import {AttestiaStake} from "./AttestiaStake.sol";
 
 /// @title AttestiaRegistry — on-chain media handles for the Attestia Protocol (Base)
-/// @dev Submitters are not registered on-chain; any contributor can submit with stake.
+/// @dev Submitters/contributors do not stake on-chain. Only attesters stake via `AttestiaStake`.
 contract AttestiaRegistry {
-    uint16 public constant CONTRIBUTOR_REFUND_BPS = 9_000; // 90%
-    uint256 public contributorMediaStake = 0.01 ether;
     uint64 public verificationWindow = 15 minutes;
 
     AttestiaStake public immutable stake;
@@ -21,11 +19,8 @@ contract AttestiaRegistry {
         string uri;
         uint64 createdAt;
         uint64 verificationDeadline;
-        uint256 contributorStake;
-        uint256 refundedAmount;
-        uint256 networkFeeAmount;
         uint32 numScoresProvided;
-        bool stakeSettled;
+        bool finalized;
         bytes32 easAttestationUid;
     }
 
@@ -42,7 +37,6 @@ contract AttestiaRegistry {
     }
 
     uint256 public nextAssetId;
-    uint256 public accruedNetworkFees;
     mapping(uint256 assetId => Media) private _media;
     mapping(bytes32 uid => ContributorMediaAttestation) private _contributorMediaAttestations;
     mapping(address contributor => bytes32[]) private _contributorAttestationUids;
@@ -53,9 +47,7 @@ contract AttestiaRegistry {
     event MediaFinalized(
         uint256 indexed assetId,
         bytes32 indexed easAttestationUid,
-        uint32 numScoresProvided,
-        uint256 refundedAmount,
-        uint256 networkFeeAmount
+        uint32 numScoresProvided
     );
     event GovernanceTransferred(address indexed previousGovernance, address indexed newGovernance);
     event ContributorResolverSet(address indexed previousResolver, address indexed newResolver);
@@ -70,7 +62,6 @@ contract AttestiaRegistry {
         uint64 verificationDeadline
     );
     event VerificationWindowSet(uint64 previousWindow, uint64 newWindow);
-    event ContributorStakeSet(uint256 previousStake, uint256 newStake);
 
     error NotMediaOwner();
     error NotGovernance();
@@ -79,11 +70,9 @@ contract AttestiaRegistry {
     error UnknownContributorAttestation();
     error ContributorAttestationAlreadyRecorded();
     error AlreadyFinalized();
-    error InvalidContributorStake();
     error ZeroAddress();
     error InvalidVerificationWindow();
     error VerificationDeadlineNotReached();
-    error TransferFailed();
     error ReentrantCall();
     error InvalidAggregateAttestation();
     error InvalidAggregateVectors();
@@ -137,13 +126,6 @@ contract AttestiaRegistry {
         contributorResolver = newResolver;
     }
 
-    function setContributorMediaStake(uint256 newStake) external onlyGovernance {
-        if (newStake == 0) revert InvalidContributorStake();
-        uint256 previous = contributorMediaStake;
-        contributorMediaStake = newStake;
-        emit ContributorStakeSet(previous, newStake);
-    }
-
     function getMedia(uint256 assetId) external view returns (Media memory) {
         if (_media[assetId].owner == address(0)) revert UnknownAsset();
         return _media[assetId];
@@ -157,8 +139,7 @@ contract AttestiaRegistry {
         string calldata mediaContext,
         string calldata contentType,
         uint64 verificationDeadline
-    ) external payable onlyContributorResolver {
-        if (msg.value != contributorMediaStake) revert InvalidContributorStake();
+    ) external onlyContributorResolver {
         if (_assetIdByContributorAttestation[uid] != 0) revert ContributorAttestationAlreadyRecorded();
 
         uint64 nowTs = uint64(block.timestamp);
@@ -171,11 +152,8 @@ contract AttestiaRegistry {
             uri: mediaUri,
             createdAt: nowTs,
             verificationDeadline: effectiveVerificationDeadline,
-            contributorStake: msg.value,
-            refundedAmount: 0,
-            networkFeeAmount: 0,
             numScoresProvided: 0,
-            stakeSettled: false,
+            finalized: false,
             easAttestationUid: bytes32(0)
         });
         _assetIdByContributorAttestation[uid] = assetId;
@@ -215,15 +193,10 @@ contract AttestiaRegistry {
         return _assetIdByContributorAttestation[uid];
     }
 
-    /// @notice Finalize with aggregate UID and settle contributor stake after deadline.
-    function finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid)
-        external
-        nonReentrant
-    {
+    function finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid) external nonReentrant {
         _finalizeWithEAS(assetId, easAttestationUid);
     }
 
-    /// @notice Finalize with contributor attestation UID and settle contributor stake after deadline.
     function finalizeWithEASByContributorUid(bytes32 contributorAttestationUid, bytes32 easAttestationUid)
         external
         nonReentrant
@@ -233,13 +206,10 @@ contract AttestiaRegistry {
         _finalizeWithEAS(assetId, easAttestationUid);
     }
 
-    /// @notice Finalize with no aggregate UID and return full contributor stake after deadline.
-    /// @dev Intended for rounds where no verifier scores were submitted on-chain.
     function finalizeWithoutEAS(uint256 assetId) external nonReentrant {
         _finalizeWithoutEAS(assetId);
     }
 
-    /// @notice Finalize with contributor attestation UID and no aggregate UID after deadline.
     function finalizeWithoutEASByContributorUid(bytes32 contributorAttestationUid) external nonReentrant {
         uint256 assetId = _assetIdByContributorAttestation[contributorAttestationUid];
         if (assetId == 0) revert UnknownContributorAttestationUid();
@@ -248,50 +218,27 @@ contract AttestiaRegistry {
 
     function _finalizeWithEAS(uint256 assetId, bytes32 easAttestationUid) internal onlyAssetOwner(assetId) {
         Media storage m = _media[assetId];
-        if (m.easAttestationUid != bytes32(0)) revert AlreadyFinalized();
-        if (m.stakeSettled) revert AlreadyFinalized();
+        if (m.finalized) revert AlreadyFinalized();
         if (block.timestamp < m.verificationDeadline) revert VerificationDeadlineNotReached();
 
         uint32 numScoresProvided = _numScoresFromAggregateAttestation(m.contentHash, easAttestationUid);
 
         m.easAttestationUid = easAttestationUid;
         m.numScoresProvided = numScoresProvided;
-        m.stakeSettled = true;
+        m.finalized = true;
 
-        uint256 refund = m.contributorStake;
-        uint256 fee;
-        if (numScoresProvided > 0) {
-            refund = (m.contributorStake * CONTRIBUTOR_REFUND_BPS) / 10_000;
-            fee = m.contributorStake - refund;
-            accruedNetworkFees += fee;
-            stake.depositContributorFees{value: fee}();
-        }
-
-        m.refundedAmount = refund;
-        m.networkFeeAmount = fee;
-
-        (bool ok,) = payable(m.owner).call{value: refund}("");
-        if (!ok) revert TransferFailed();
-
-        emit MediaFinalized(assetId, easAttestationUid, numScoresProvided, refund, fee);
+        emit MediaFinalized(assetId, easAttestationUid, numScoresProvided);
     }
 
     function _finalizeWithoutEAS(uint256 assetId) internal onlyAssetOwner(assetId) {
         Media storage m = _media[assetId];
-        if (m.easAttestationUid != bytes32(0)) revert AlreadyFinalized();
-        if (m.stakeSettled) revert AlreadyFinalized();
+        if (m.finalized) revert AlreadyFinalized();
         if (block.timestamp < m.verificationDeadline) revert VerificationDeadlineNotReached();
 
-        uint256 refund = m.contributorStake;
         m.numScoresProvided = 0;
-        m.stakeSettled = true;
-        m.refundedAmount = refund;
-        m.networkFeeAmount = 0;
+        m.finalized = true;
 
-        (bool ok,) = payable(m.owner).call{value: refund}("");
-        if (!ok) revert TransferFailed();
-
-        emit MediaFinalized(assetId, bytes32(0), 0, refund, 0);
+        emit MediaFinalized(assetId, bytes32(0), 0);
     }
 
     function _numScoresFromAggregateAttestation(bytes32 contentHash, bytes32 uid) internal view returns (uint32) {
@@ -309,7 +256,6 @@ contract AttestiaRegistry {
             uint16[] memory deepfakeRiskScores
         ) = abi.decode(a.data, (bytes32, uint16, uint32, bytes32, bytes32, address[], uint16[]));
 
-        // Silence unused locals (kept for schema compatibility / forward-proofing).
         aggregateDeepFakeRiskScore;
         payloadHash;
         proofCommitment;

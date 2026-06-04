@@ -7,7 +7,7 @@ Solidity for `AttestiaStake`, `AttestiaRegistry`, `AttestiaContributorResolver`,
 ### Who does what
 
 - `AttestiaStake`: participant roles, attester stake, rewards/slashing, and network phase.
-- `AttestiaRegistry`: media registration + contributor escrow stake + final settlement/refund.
+- `AttestiaRegistry`: media registration + finalization (contributors do not stake on-chain).
 - `AttestiaContributorResolver`: validates contributor membership and forwards contributor media metadata to `AttestiaRegistry`.
 - `AttestiaAggregateResolver`: validates aggregate attestation publisher and forwards verifier vectors to `AttestiaStake`.
 - `EAS`: attestation storage (contributor media attestation + aggregate attestation payload).
@@ -24,9 +24,9 @@ sequenceDiagram
     participant V as AttestiaAggregateResolver
     participant K as AttestiaStake
 
-    S->>E: publish contributor media attestation + contributor stake
+    S->>E: publish contributor media attestation (no stake)
     E->>C: contributor resolver onAttest(attestation)
-    C->>R: onContributorMediaAttested(...) + stake escrow
+    C->>R: onContributorMediaAttested(...)
     R-->>S: assetId + protocol verificationDeadline
     Note over S,A: Off-chain review window
     A-->>E: off-chain score attestations/signatures
@@ -39,28 +39,23 @@ sequenceDiagram
     S->>R: finalizeWithEASByContributorUid(contributorUid, aggregateUid) after deadline
     R->>E: getAttestation(aggregateUid)
     R-->>R: decode attestation, derive numVerifiers
-    alt numVerifiers == 0
-      R-->>S: full contributor refund
-    else numVerifiers > 0
-      R->>K: depositContributorFees(fee)
-      R-->>S: partial contributor refund
-    end
+    R-->>R: record numScoresProvided from aggregate
 ```
 
 ### Function interaction map
 
 - Submitter lifecycle (no on-chain registration):
   - contributor EAS attestation (schema bound to `AttestiaContributorResolver`)
-  - resolver callback creates registry media entry + escrow stake
+  - resolver callback creates registry media entry (no token transfer)
   - `AttestiaRegistry.finalizeWithEASByContributorUid(contributorUid, aggregateUid)`
-- Attester lifecycle:
-  - `AttestiaStake.stake()` then `AttestiaStake.registerAsAttester()`
+- Attester lifecycle (USDC stake; defaults ≈ former ETH at ~$3.5k/ETH):
+  - Min stake **350 USDC** (was 0.1 ETH), bounds **175–700 USDC** (0.05–0.2 ETH)
+  - Base reward **7 USDC**/round (was 0.002 ETH)
+  - Approve `AttestiaStake.stakeToken()` then `stake(amount)` and `registerAsAttester()`
   - aggregate publish triggers `AttestiaAggregateResolver.onAttest(...)`
   - resolver calls `AttestiaStake.processAggregateScores(...)`
-- Settlement rule:
-  - `AttestiaRegistry` reads aggregate data from EAS and counts **independent** attesters (excludes `AttestiaStake.nativeAttester`).
-  - `numScoresProvided == 0` => full contributor refund.
-  - `numScoresProvided > 0` => partial contributor refund + network fee routed to `AttestiaStake`.
+- Finalization:
+  - `AttestiaRegistry` reads aggregate data from EAS and records **independent** attester count (excludes `AttestiaStake.nativeAttester`). No contributor refunds or fees.
 - Native attester:
   - Configure `AttestiaStake.nativeAttester` to the wallet that signs Attestia detector off-chain scores.
   - Aggregate `verifiers[]` may include that address once; `numVerifiers` is the count of independent attesters only.
@@ -83,6 +78,7 @@ stateDiagram-v2
 - Node.js 20+
 - HTTPS RPC URL for Base Sepolia (or Base mainnet)
 - ETH on the deployer account for deployment + schema registration txs
+- USDC (or configured `stakeToken`) for funding rewards and test stakes on live networks
 
 ## Setup
 
@@ -102,7 +98,9 @@ Set these in `contracts/.env`:
 
 - `PRIVATE_KEY` — deployer key (`0x...`)
 - `BASE_SEPOLIA_RPC_URL` — RPC URL
-- optional: `MIN_STAKE_WEI` (if omitted, deployment script currently defaults to `0.1` ETH)
+- optional: `STAKE_TOKEN_ADDRESS` (defaults to Circle USDC on Base / Base Sepolia)
+- optional: `MIN_STAKE_AMOUNT` (default `350` USDC)
+- optional: `BASE_REWARD_PER_ROUND_AMOUNT` (default `7` USDC per scored round)
 - optional: `ATTESTIA_NATIVE_ATTESTER` — detector signer wallet (wired to `AttestiaStake.nativeAttester` at deploy)
 
 ### 1) Deploy core contracts (`AttestiaStake` + `AttestiaRegistry`)
