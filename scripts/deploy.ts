@@ -5,10 +5,10 @@ const EAS_BY_CHAIN: Record<number, string> = {
   8453: "0x4200000000000000000000000000000000000021",
 };
 
-/** Circle USDC on Base (6 decimals). */
+/** Circle USDC on Base (6 decimals). Lowercase; normalized via getAddress at runtime. */
 const USDC_BY_CHAIN: Record<number, string> = {
-  84532: "0x036CbD53842c542663c208eecBC9e7Bd40e6683B",
-  8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  84532: "0x036cbd53842c542663c208eecbc9e7bd40e6683b",
+  8453: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
 };
 
 /** Rounded from former ETH amounts at ~$3.5k/ETH (6-decimal USDC). */
@@ -53,14 +53,15 @@ async function main() {
   }
 
   const stakeTokenRaw = process.env.STAKE_TOKEN_ADDRESS?.trim();
-  let stakeToken = stakeTokenRaw && ethers.isAddress(stakeTokenRaw)
-    ? ethers.getAddress(stakeTokenRaw)
+  const stakeTokenCandidate = stakeTokenRaw && ethers.isAddress(stakeTokenRaw)
+    ? stakeTokenRaw
     : USDC_BY_CHAIN[chainId];
-  if (!stakeToken) {
+  if (!stakeTokenCandidate) {
     throw new Error(
       `Set STAKE_TOKEN_ADDRESS or deploy on Base/Base Sepolia (known USDC: ${JSON.stringify(USDC_BY_CHAIN)})`,
     );
   }
+  const stakeToken = ethers.getAddress(stakeTokenCandidate.toLowerCase());
 
   console.log("Network:", network.name);
   console.log("Deployer:", deployer.address);
