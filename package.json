@@ -5,6 +5,8 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "deploy:base-sepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
+    "deploy:test-usdc": "hardhat run scripts/deployTestUsdc.ts --network baseSepolia",
+    "test-usdc:mint": "hardhat run scripts/mintTestUsdc.ts --network baseSepolia",
     "deploy:aggregate-resolver": "hardhat run scripts/deployAggregateResolver.ts --network baseSepolia",
     "deploy:contributor-resolver": "hardhat run scripts/deployContributorResolver.ts --network baseSepolia",
     "registry:set-window": "hardhat run scripts/setRegistryVerificationWindow.ts --network baseSepolia",

@@ -82,14 +82,16 @@ async function main() {
   await registry.waitForDeployment();
   const regAddr = await registry.getAddress();
   await verifyContract(regAddr, [stakeAddr, eas]);
-  await stake.setRegistry(regAddr);
+  const setRegTx = await stake.setRegistry(regAddr);
+  await setRegTx.wait();
   console.log("AttestiaRegistry", regAddr);
   console.log("Registry linked in AttestiaStake");
 
   const nativeRaw = process.env.ATTESTIA_NATIVE_ATTESTER?.trim();
   if (nativeRaw && ethers.isAddress(nativeRaw)) {
     const native = ethers.getAddress(nativeRaw);
-    await stake.setNativeAttester(native);
+    const setNativeTx = await stake.setNativeAttester(native);
+    await setNativeTx.wait();
     console.log("nativeAttester", native);
   } else if (nativeRaw) {
     console.warn("ATTESTIA_NATIVE_ATTESTER is set but not a valid address — skipped");
