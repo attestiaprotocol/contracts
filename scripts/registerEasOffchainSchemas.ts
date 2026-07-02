@@ -10,7 +10,7 @@ import { ethers } from "hardhat";
 import { ensureSchemaRegistered } from "./easSchemaRegistryUtils";
 
 const SCHEMA =
-  "bytes32 contentHash,string assetId,uint16 deepfakeRiskScore,string algorithm,uint64 chainTimestamp";
+  "bytes32 contentHash,string assetId,uint16 deepfakeRiskScore,string algorithm,uint64 chainTimestamp,string evaluationScoreReason";
 
 async function main() {
   const [deployer] = await ethers.getSigners();

@@ -15,7 +15,7 @@ import { ensureSchemaRegistered } from "./easSchemaRegistryUtils";
 
 /** Percent fields use uint16 with 2 decimal places: 89.83% → 8983 (value × 100, max 10000). */
 const SCHEMA =
-  "bytes32 contentHash,uint16 aggregateDeepFakeRiskScore,uint32 numIndependentVerifiers,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiersWalletIds,uint16[] deepfakeRiskScores";
+  "bytes32 contentHash,uint16 aggregateDeepFakeRiskScore,uint32 numIndependentVerifiers,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiersWalletIds,uint16[] deepfakeRiskScores,string[] evaluationScoreReasons";
 
 function resolverFromEnv(): string {
   const raw = process.env.ATTESTIA_AGGREGATE_RESOLVER?.trim();

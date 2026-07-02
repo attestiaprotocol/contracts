@@ -51,10 +51,16 @@ contract AttestiaAggregateResolver is SchemaResolver {
             ,
             ,
             address[] memory verifiers,
-            uint16[] memory scores
-        ) = abi.decode(attestation.data, (bytes32, uint16, uint32, bytes32, bytes32, address[], uint16[]));
+            uint16[] memory scores,
+            string[] memory evaluationScoreReasons
+        ) = abi.decode(
+            attestation.data,
+            (bytes32, uint16, uint32, bytes32, bytes32, address[], uint16[], string[])
+        );
 
         if (verifiers.length != scores.length) revert InvalidScoreVectors();
+        if (evaluationScoreReasons.length != scores.length) revert InvalidScoreVectors();
+        evaluationScoreReasons;
         if (verifiers.length < numVerifiers) revert InvalidParticipantVectors();
 
         stake.processAggregateScores(attestation.uid, numVerifiers, verifiers, scores);

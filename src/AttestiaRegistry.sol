@@ -253,15 +253,21 @@ contract AttestiaRegistry {
             bytes32 payloadHash,
             bytes32 proofCommitment,
             address[] memory verifiers,
-            uint16[] memory deepfakeRiskScores
-        ) = abi.decode(a.data, (bytes32, uint16, uint32, bytes32, bytes32, address[], uint16[]));
+            uint16[] memory deepfakeRiskScores,
+            string[] memory evaluationScoreReasons
+        ) = abi.decode(
+            a.data,
+            (bytes32, uint16, uint32, bytes32, bytes32, address[], uint16[], string[])
+        );
 
         aggregateDeepFakeRiskScore;
         payloadHash;
         proofCommitment;
+        evaluationScoreReasons;
 
         if (attestedContentHash != contentHash) revert InvalidAggregateAttestation();
         if (verifiers.length != deepfakeRiskScores.length) revert InvalidAggregateVectors();
+        if (evaluationScoreReasons.length != deepfakeRiskScores.length) revert InvalidAggregateVectors();
 
         address native = address(stake.nativeAttester());
         uint32 independentCount;

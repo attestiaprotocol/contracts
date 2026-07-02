@@ -4,12 +4,12 @@
  *   ATTESTIA_STAKE=0x... npx hardhat run scripts/configureStakeRewards.ts --network baseSepolia
  *
  * Optional env:
- *   BASE_REWARD_PER_ROUND_AMOUNT  (default 7 USDC, 6 decimals: 7000000)
+ *   BASE_REWARD_PER_ROUND_AMOUNT  (default 0.1 USDC, 6 decimals: 100000)
  *   REWARD_POOL_FUND_AMOUNT       (if set, approves stakeToken and calls fundRewards)
  */
 import { ethers } from "hardhat";
 
-const DEFAULT_BASE_REWARD = 7n * 10n ** 6n;
+const DEFAULT_BASE_REWARD = 100_000n;
 
 async function main() {
   const [caller] = await ethers.getSigners();

@@ -5,7 +5,7 @@ export const TOKEN_DECIMALS = 6;
 export const MIN_STAKE = 350n * 10n ** 6n; // 0.1 ETH → 350 USDC
 export const MIN_VERIFIER_STAKE = 175n * 10n ** 6n; // 0.05 ETH → 175 USDC
 export const MAX_VERIFIER_STAKE = 700n * 10n ** 6n; // 0.2 ETH → 700 USDC
-export const BASE_REWARD = 7n * 10n ** 6n; // 0.002 ETH → 7 USDC per round
+export const BASE_REWARD = 100_000n; // 0.1 USDC per round (6 decimals)
 
 export async function deployMockStakeToken() {
   const Mock = await ethers.getContractFactory("MockERC20");

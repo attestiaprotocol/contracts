@@ -13,7 +13,7 @@ const USDC_BY_CHAIN: Record<number, string> = {
 
 /** Rounded from former ETH amounts at ~$3.5k/ETH (6-decimal USDC). */
 const DEFAULT_MIN_STAKE = 350n * 10n ** 6n; // 0.1 ETH → 350 USDC
-const DEFAULT_BASE_REWARD = 7n * 10n ** 6n; // 0.002 ETH → 7 USDC per round
+const DEFAULT_BASE_REWARD = 100_000n; // 0.1 USDC per round (6 decimals)
 
 async function verifyContract(address: string, constructorArguments: unknown[]) {
   if (network.name === "hardhat" || network.name === "localhost") {

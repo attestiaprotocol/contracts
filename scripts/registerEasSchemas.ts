@@ -30,14 +30,14 @@ const SCHEMAS = [
     envScoreServer: "EAS_SCHEMA_UID_SCORE_OFFCHAIN",
     label: "ATTESTIA_SCORE_OFFCHAIN",
     definition:
-      "bytes32 contentHash,string assetId,uint256 deepfakeRiskScore,string algorithm,uint64 chainTimestamp",
+      "bytes32 contentHash,string assetId,uint16 deepfakeRiskScore,string algorithm,uint64 chainTimestamp,string evaluationScoreReason",
   },
   {
     envOnchain: "NEXT_PUBLIC_EAS_SCHEMA_UID",
     envOnchainServer: "EAS_SCHEMA_UID_AGGREGATE_ONCHAIN",
     label: "ATTESTIA_ONCHAIN_AGGREGATE",
     definition:
-      "bytes32 contentHash,uint16 aggregateDeepFakeRiskScore,uint32 numIndependentVerifiers,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiersWalletIds,uint16[] deepfakeRiskScores",
+      "bytes32 contentHash,uint16 aggregateDeepFakeRiskScore,uint32 numIndependentVerifiers,bytes32 payloadHash,bytes32 proofCommitment,address[] verifiersWalletIds,uint16[] deepfakeRiskScores,string[] evaluationScoreReasons",
   },
 ] as const;
 

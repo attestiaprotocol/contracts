@@ -24,7 +24,10 @@ describe("AttestiaRegistry", () => {
     numVerifiers?: number;
     verifiers: string[];
     deepfakeRiskScores: number[];
+    evaluationScoreReasons?: string[];
   }) {
+    const evaluationScoreReasons =
+      input.evaluationScoreReasons ?? input.deepfakeRiskScores.map(() => "");
     return ethers.AbiCoder.defaultAbiCoder().encode(
       [
         "bytes32",
@@ -34,6 +37,7 @@ describe("AttestiaRegistry", () => {
         "bytes32",
         "address[]",
         "uint16[]",
+        "string[]",
       ],
       [
         input.contentHash,
@@ -43,6 +47,7 @@ describe("AttestiaRegistry", () => {
         ethers.ZeroHash,
         input.verifiers,
         input.deepfakeRiskScores,
+        evaluationScoreReasons,
       ],
     ) as `0x${string}`;
   }

@@ -123,7 +123,7 @@ describe("AttestiaStake", () => {
     const [, , , dave, eve, frank] = await ethers.getSigners();
     const fund = 1_000_000n * 10n ** 6n;
 
-    await stake.connect(deployer).setBaseRewardPerRound(7n * 10n ** 6n);
+    await stake.connect(deployer).setBaseRewardPerRound(BASE_REWARD);
     await mintAndApprove(token, deployer, stakeAddr, fund);
     await stake.connect(deployer).fundRewards(fund);
 
@@ -151,7 +151,7 @@ describe("AttestiaStake", () => {
     const [, , , dave, eve, frank] = await ethers.getSigners();
     const fund = 1_000_000n * 10n ** 6n;
 
-    await stake.connect(deployer).setBaseRewardPerRound(7n * 10n ** 6n);
+    await stake.connect(deployer).setBaseRewardPerRound(BASE_REWARD);
     await mintAndApprove(token, deployer, stakeAddr, fund);
     await stake.connect(deployer).fundRewards(fund);
 
@@ -176,7 +176,7 @@ describe("AttestiaStake", () => {
     const [, , , dave] = await ethers.getSigners();
     const fund = 1_000_000n * 10n ** 6n;
 
-    await stake.connect(deployer).setBaseRewardPerRound(7n * 10n ** 6n);
+    await stake.connect(deployer).setBaseRewardPerRound(BASE_REWARD);
     await mintAndApprove(token, deployer, stakeAddr, fund);
     await stake.connect(deployer).fundRewards(fund);
 
@@ -258,7 +258,7 @@ describe("AttestiaStake", () => {
   it("returns compact economic config snapshot", async () => {
     const { stake, deployer } = await deployStake();
 
-    await stake.connect(deployer).setBaseRewardPerRound(7n * 10n ** 6n);
+    await stake.connect(deployer).setBaseRewardPerRound(BASE_REWARD);
     await stake.connect(deployer).setPhaseRewardBps(4200, 7800, 10000);
     await stake.connect(deployer).setRewardWeights(7000, 3000);
     await stake.connect(deployer).setDirectionalSlashThresholds(5100, 4400, 5600);
@@ -266,7 +266,7 @@ describe("AttestiaStake", () => {
     await stake.connect(deployer).setReputationParams(33000, 7500, 6500, 14500);
 
     const cfg = await stake.getEconomicConfig();
-    expect(cfg.baseRewardPerRound).to.equal(7n * 10n ** 6n);
+    expect(cfg.baseRewardPerRound).to.equal(BASE_REWARD);
     expect(cfg.phase0RewardBps).to.equal(4200);
     expect(cfg.phase1RewardBps).to.equal(7800);
     expect(cfg.phase2RewardBps).to.equal(10000);
@@ -289,7 +289,7 @@ describe("AttestiaStake", () => {
     const fund = 1_000_000n * 10n ** 6n;
 
     await stake.connect(deployer).setNativeAttester(native.address);
-    await stake.connect(deployer).setBaseRewardPerRound(7n * 10n ** 6n);
+    await stake.connect(deployer).setBaseRewardPerRound(BASE_REWARD);
     await mintAndApprove(token, deployer, stakeAddr, fund);
     await stake.connect(deployer).fundRewards(fund);
 
@@ -319,7 +319,7 @@ describe("AttestiaStake", () => {
     const fund = 1_000_000n * 10n ** 6n;
 
     await stake.connect(deployer).setNativeAttester(native.address);
-    await stake.connect(deployer).setBaseRewardPerRound(7n * 10n ** 6n);
+    await stake.connect(deployer).setBaseRewardPerRound(BASE_REWARD);
     await mintAndApprove(token, deployer, stakeAddr, fund);
     await stake.connect(deployer).fundRewards(fund);
 

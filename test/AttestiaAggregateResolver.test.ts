@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
+  BASE_REWARD,
   deployAttestiaStake,
   mintAndApprove,
   MIN_STAKE,
@@ -13,7 +14,10 @@ describe("AttestiaAggregateResolver", () => {
     numVerifiers?: number;
     verifiers: string[];
     deepfakeRiskScores: number[];
+    evaluationScoreReasons?: string[];
   }) {
+    const evaluationScoreReasons =
+      input.evaluationScoreReasons ?? input.deepfakeRiskScores.map(() => "");
     return ethers.AbiCoder.defaultAbiCoder().encode(
       [
         "bytes32",
@@ -23,6 +27,7 @@ describe("AttestiaAggregateResolver", () => {
         "bytes32",
         "address[]",
         "uint16[]",
+        "string[]",
       ],
       [
         ethers.keccak256(ethers.toUtf8Bytes("content")),
@@ -32,6 +37,7 @@ describe("AttestiaAggregateResolver", () => {
         ethers.ZeroHash,
         input.verifiers,
         input.deepfakeRiskScores,
+        evaluationScoreReasons,
       ],
     );
   }
@@ -112,7 +118,7 @@ describe("AttestiaAggregateResolver", () => {
 
     const { token, stake, stakeAddr } = await deployAttestiaStake();
     const fund = 1_000_000n * 10n ** 6n;
-    await stake.connect(deployer).setBaseRewardPerRound(7n * 10n ** 6n);
+    await stake.connect(deployer).setBaseRewardPerRound(BASE_REWARD);
     await mintAndApprove(token, deployer, stakeAddr, fund);
     await stake.connect(deployer).fundRewards(fund);
 
@@ -174,6 +180,37 @@ describe("AttestiaAggregateResolver", () => {
     await expect(fake.attest(await resolver.getAddress(), a)).to.be.revertedWithCustomError(
       resolver,
       "InvalidParticipantVectors",
+    );
+  });
+
+  it("reverts when evaluationScoreReasons length does not match scores", async () => {
+    const [deployer, verifier] = await ethers.getSigners();
+    const Fake = await ethers.getContractFactory("FakeEAS");
+    const fake = await Fake.deploy();
+    await fake.waitForDeployment();
+
+    const { token, stake, stakeAddr } = await deployAttestiaStake();
+
+    const Resolver = await ethers.getContractFactory("AttestiaAggregateResolver");
+    const resolver = await Resolver.connect(deployer).deploy(
+      await fake.getAddress(),
+      stakeAddr,
+    );
+    await resolver.waitForDeployment();
+    await stake.connect(deployer).setPerformanceReporter(await resolver.getAddress());
+    await stakeAsAttester(token, stake, stakeAddr, verifier);
+
+    const a = emptyAttestation(
+      deployer.address,
+      aggregateData({
+        verifiers: [verifier.address],
+        deepfakeRiskScores: [5000],
+        evaluationScoreReasons: ["facial artifacts", "audio mismatch"],
+      }),
+    );
+    await expect(fake.attest(await resolver.getAddress(), a)).to.be.revertedWithCustomError(
+      resolver,
+      "InvalidScoreVectors",
     );
   });
 

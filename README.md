@@ -50,7 +50,7 @@ sequenceDiagram
   - `AttestiaRegistry.finalizeWithEASByContributorUid(contributorUid, aggregateUid)`
 - Attester lifecycle (USDC stake; defaults ≈ former ETH at ~$3.5k/ETH):
   - Min stake **350 USDC** (was 0.1 ETH), bounds **175–700 USDC** (0.05–0.2 ETH)
-  - Base reward **7 USDC**/round (was 0.002 ETH)
+  - Base reward **0.1 USDC**/round
   - Approve `AttestiaStake.stakeToken()` then `stake(amount)` and `registerAsAttester()`
   - aggregate publish triggers `AttestiaAggregateResolver.onAttest(...)`
   - resolver calls `AttestiaStake.processAggregateScores(...)`
@@ -100,7 +100,7 @@ Set these in `contracts/.env`:
 - `BASE_SEPOLIA_RPC_URL` — RPC URL
 - optional: `STAKE_TOKEN_ADDRESS` (defaults to Circle USDC on Base / Base Sepolia)
 - optional: `MIN_STAKE_AMOUNT` (default `350` USDC)
-- optional: `BASE_REWARD_PER_ROUND_AMOUNT` (default `7` USDC per scored round)
+- optional: `BASE_REWARD_PER_ROUND_AMOUNT` (default `0.1` USDC per scored round, `100000` in 6-decimal units)
 - optional: `ATTESTIA_NATIVE_ATTESTER` — detector signer wallet (wired to `AttestiaStake.nativeAttester` at deploy)
 
 ### 1) Deploy core contracts (`AttestiaStake` + `AttestiaRegistry`)
